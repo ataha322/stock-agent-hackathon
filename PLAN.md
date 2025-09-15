@@ -10,30 +10,6 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
 - **Database**: SQLite (better-sqlite3)
 - **APIs**: Perplexity AI, Alpha Vantage (free tier)
 
-## File Structure
-```
-stock-news-monitor/
-├── src/
-│   ├── main.js              # Entry point
-│   ├── ui/
-│   │   ├── terminal.js      # TUI setup and layout
-│   │   ├── watchlist.js     # Watchlist pane component
-│   │   ├── prices.js        # Stock prices pane
-│   │   └── news.js          # News analysis pane
-│   ├── services/
-│   │   ├── database.js      # SQLite operations
-│   │   ├── ai.js            # Perplexity API client
-│   │   └── stocks.js        # Stock price API client
-│   └── utils/
-│       ├── config.js        # Configuration management
-│       └── helpers.js       # Utility functions
-├── database/
-│   └── init.sql            # Database schema
-├── package.json
-├── .env.example
-└── README.md
-```
-
 ## Hour-by-Hour Implementation Plan
 
 ### 1

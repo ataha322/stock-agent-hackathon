@@ -1,1 +1,3 @@
-console.log("Hello via Bun!");
+import { App } from "./app";
+
+new App();
