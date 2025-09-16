@@ -13,14 +13,13 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
 ## Hour-by-Hour Implementation Plan
 
 ### 1
-- [x] Basic TUI layout with blessed.js. Mono-pane - 1 view per screen (like Vim). total of 2 screens - stock screen and news-aggregation screen.
-- [ ] Watchlist CRUD operations (add/remove stocks)
+- [x] Basic TUI layout with blessed.js (single screen)
+- [x] Watchlist CRUD operations (add/remove stocks)
 
 ### 2
-- [ ] Alpha Vantage API integration for stock prices
-- [ ] Perplexity API client setup
-- [ ] Basic stock price display in TUI
-- [ ] Test Perplexity queries with sample stocks
+- [x] Alpha Vantage API integration for stock prices
+- [x] Stock price display in TUI with color coding
+- [x] Real-time price updates with API validation
 
 ### 3
 - [ ] Automated Perplexity queries for watchlist stocks
@@ -56,20 +55,15 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
    - News summary caching to avoid API limits
 
 4. **TUI Interface**
-   - Stock-window: Watchlist with add/remove functionality
-   - News aggregator window: summary of financial news for a stock
+   - Single stock watchlist screen with real-time price display
+   - Add/remove functionality with API validation
 
 ### Keyboard Shortcuts
-- special prefix - <leader> key should be ctrl+x.
-
 - `a`, `Enter` - Add stock to watchlist
 - `d`, `Backspace` - Delete selected stock
-- `r` - Refresh all data
+- `r` - Refresh stock prices
 - `q`, `ctrl+c` - Quit application
 - `↑/↓`, `k/j` - Navigate watchlist
-- `<leader>1` - switch to first screen (stock screen)
-- `<leader>2` - switch to second screen (news screen)
-- `tab`, `shift+tab` - forward and backward one screen.
 
 ## API Configuration
 

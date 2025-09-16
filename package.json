@@ -5,12 +5,14 @@
   "private": true,
   "devDependencies": {
     "@types/blessed": "^0.1.25",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/winston": "^2.4.4"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
-    "blessed": "^0.1.81"
+    "blessed": "^0.1.81",
+    "winston": "^3.17.0"
   }
 }

@@ -6,6 +6,10 @@ export interface WatchlistItem {
     id?: number;
     ticker: string;
     addedAt: string;
+    price?: number;
+    change?: number;
+    changePercent?: number;
+    lastUpdated?: string;
 }
 
 export class WatchlistDatabase {
@@ -30,7 +34,11 @@ export class WatchlistDatabase {
             CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticker TEXT UNIQUE NOT NULL,
-                added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                price REAL,
+                change_amount REAL,
+                change_percent REAL,
+                last_updated DATETIME
             )
         `);
 
@@ -60,7 +68,14 @@ export class WatchlistDatabase {
 
     getAllStocks(): WatchlistItem[] {
         const stmt = this.db.prepare(`
-            SELECT id, ticker, added_at as addedAt 
+            SELECT 
+                id, 
+                ticker, 
+                added_at as addedAt,
+                price,
+                change_amount as change,
+                change_percent as changePercent,
+                last_updated as lastUpdated
             FROM watchlist 
             ORDER BY added_at DESC
         `);
@@ -76,6 +91,20 @@ export class WatchlistDatabase {
         const stmt = this.db.prepare("SELECT COUNT(*) as count FROM watchlist");
         const result = stmt.get() as { count: number };
         return result.count;
+    }
+
+    updateStockPrice(ticker: string, price: number, change: number, changePercent: number): boolean {
+        try {
+            const stmt = this.db.prepare(`
+                UPDATE watchlist 
+                SET price = ?, change_amount = ?, change_percent = ?, last_updated = CURRENT_TIMESTAMP 
+                WHERE ticker = ?
+            `);
+            const result = stmt.run(price, change, changePercent, ticker.toUpperCase());
+            return result.changes > 0;
+        } catch (error) {
+            return false;
+        }
     }
 
     close() {

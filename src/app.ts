@@ -1,27 +1,30 @@
 import blessed from "blessed";
 import { WatchlistDatabase, type WatchlistItem } from "./database/watchlist";
+import { AlphaVantageService, type StockQuote } from "./services/alpha-vantage";
+import { logger } from "./utils/logger";
 
 export class App {
     private screen: blessed.Widgets.Screen;
     private stockScreenContainer!: blessed.Widgets.BoxElement;
     private watchlistWidget!: blessed.Widgets.ListElement;
     private statusLine!: blessed.Widgets.BoxElement;
-    private newsScreen!: blessed.Widgets.BoxElement;
-    private currentScreen: number = 0; // 0 = stock, 1 = news
-    private leaderPressed: boolean = false;
+
     private database!: WatchlistDatabase;
+    private alphaVantage!: AlphaVantageService;
+    private activePopup: blessed.Widgets.BlessedElement | null = null;
 
     constructor() {
         this.database = new WatchlistDatabase();
+        this.alphaVantage = new AlphaVantageService();
         this.screen = blessed.screen({
             smartCSR: true,
-            title: "Stock News Monitor",
+            title: "Stock Watchlist Monitor",
             autoPadding: true,
         });
 
         this.setupScreens();
         this.setupKeyBindings();
-        this.loadWatchlist();
+        this.loadWatchlist().catch((error) => logger.error("Failed to load watchlist:", error));
         this.screen.render();
     }
 
@@ -60,6 +63,7 @@ export class App {
             keys: true,
             vi: true,
             mouse: true,
+            tags: true,
             style: {
                 selected: {
                     bg: "blue",
@@ -85,53 +89,91 @@ export class App {
             left: 1,
             width: "95%",
             height: 1,
-            content: "a:Add | d:Delete | j/k:Navigate | Tab:Switch | q:Quit",
+            content: "a:Add | d:Delete | j/k:Navigate | r:Refresh | q:Quit",
             style: {
                 fg: "cyan",
             },
         });
 
-        // News screen
-        this.newsScreen = blessed.box({
-            label: " News Analysis ",
-            hidden: true,
-            top: "center",
-            left: "center",
-            width: "95%",
-            height: "95%",
-            border: {
-                type: "line",
-            },
-            style: {
-                border: {
-                    fg: "green",
-                },
-                focus: {
-                    border: {
-                        fg: "yellow",
-                    },
-                },
-            },
-            content: "News Analysis Screen\n\nNews summaries will appear here\nPress Tab to switch to Stock screen",
-            tags: true,
-            focusable: true,
-        });
-
         this.screen.append(this.stockScreenContainer);
-        this.screen.append(this.newsScreen);
         
         // Focus the initial screen
         this.stockScreenContainer.focus();
     }
 
-    private loadWatchlist() {
+    private async loadWatchlist() {
         const stocks = this.database.getAllStocks();
-        const items = stocks.length > 0 
-            ? stocks.map(stock => `${stock.ticker} (added: ${new Date(stock.addedAt).toLocaleDateString()})`)
-            : ["No stocks in watchlist. Press 'a' to add one."];
         
+        if (stocks.length === 0) {
+            this.watchlistWidget.setItems(["No stocks in watchlist. Press 'a' to add one."]);
+            this.screen.render();
+            return;
+        }
+
+        // Format stock items with price data
+        const items = stocks.map(stock => this.formatStockItem(stock));
         this.watchlistWidget.setItems(items);
         this.screen.render();
+
+        // Refresh stock prices in background
+        this.refreshStockPrices();
+    }
+
+    private formatStockItem(stock: WatchlistItem): string {
+        if (!stock.price) {
+            return `{bold}${stock.ticker}{/bold} - Loading price...`;
+        }
+
+        const changeColor = stock.change! >= 0 ? "green" : "red";
+        const changeSign = stock.change! >= 0 ? "+" : "";
+        const changePercent = stock.changePercent?.toFixed(2) || "0.00";
+        const change = stock.change?.toFixed(2) || "0.00";
+        const price = stock.price.toFixed(2);
+
+        return `{bold}${stock.ticker}{/bold} $${price} {${changeColor}-fg}${changeSign}$${change} (${changeSign}${changePercent}%){/}`;
+    }
+
+    private async refreshStockPrices() {
+        const stocks = this.database.getAllStocks();
+        let successCount = 0;
+        let errorCount = 0;
+
+        const updatePromises = stocks.map(async (stock) => {
+            try {
+                const quote = await this.alphaVantage.getStockQuote(stock.ticker);
+                if (quote) {
+                    this.database.updateStockPrice(
+                        stock.ticker,
+                        quote.price,
+                        quote.change,
+                        quote.changePercent
+                    );
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            } catch (error) {
+                logger.error(`Failed to update ${stock.ticker}:`, error);
+                errorCount++;
+            }
+        });
+
+        await Promise.all(updatePromises);
+        
+        // Reload the watchlist with updated prices
+        const updatedStocks = this.database.getAllStocks();
+        const items = updatedStocks.map(stock => this.formatStockItem(stock));
+        this.watchlistWidget.setItems(items);
+        this.screen.render();
+
+        // Show summary message
+        if (errorCount === 0) {
+            this.showMessage(`Updated ${successCount} stock prices`, "success");
+        } else if (successCount === 0) {
+            this.showMessage(`Failed to update stock prices`, "error");
+        } else {
+            this.showMessage(`Updated ${successCount}/${stocks.length} prices`, "warning");
+        }
     }
 
     private showAddStockDialog() {
@@ -152,7 +194,13 @@ export class App {
             },
         });
 
-        prompt.input("Enter stock ticker (e.g., AAPL):", "", (err, value) => {
+        // Track active popup
+        this.activePopup = prompt;
+
+        prompt.input("Enter stock ticker (e.g., AAPL):", "", async (err, value) => {
+            // Clear active popup
+            this.activePopup = null;
+            
             if (err || !value) {
                 this.stockScreenContainer.focus();
                 this.screen.render();
@@ -162,11 +210,34 @@ export class App {
             const ticker = value.trim().toUpperCase();
             if (!ticker || ticker.length > 10) {
                 this.showMessage("Invalid ticker symbol", "error");
+                this.stockScreenContainer.focus();
+                this.screen.render();
                 return;
             }
 
             if (this.database.hasStock(ticker)) {
                 this.showMessage(`${ticker} is already in watchlist`, "warning");
+                this.stockScreenContainer.focus();
+                this.screen.render();
+                return;
+            }
+
+            // Show validating message
+            this.showMessage(`Validating ${ticker}...`, "warning");
+
+            // Validate ticker with Alpha Vantage
+            try {
+                const isValid = await this.alphaVantage.validateSymbol(ticker);
+                if (!isValid) {
+                    this.showMessage(`${ticker} is not a valid stock symbol`, "error");
+                    this.stockScreenContainer.focus();
+                    this.screen.render();
+                    return;
+                }
+            } catch (error) {
+                this.showMessage(`Error validating ${ticker}: ${error instanceof Error ? error.message : 'Unknown error'}`, "error");
+                this.stockScreenContainer.focus();
+                this.screen.render();
                 return;
             }
 
@@ -176,6 +247,10 @@ export class App {
             } else {
                 this.showMessage("Failed to add stock", "error");
             }
+            
+            // Ensure focus returns to main screen
+            this.stockScreenContainer.focus();
+            this.screen.render();
         });
     }
 
@@ -208,12 +283,14 @@ export class App {
             parent: this.screen,
             top: 1,
             right: 1,
-            width: "shrink",
+            width: 40,
             height: "shrink",
             label: ` ${type.toUpperCase()} `,
             border: {
                 type: "line",
             },
+            align: "center",
+            valign: "middle",
             style: {
                 border: {
                     fg: colors[type],
@@ -222,30 +299,24 @@ export class App {
         });
 
         message.display(text, 2, () => {
-            this.stockScreenContainer.focus();
-            this.screen.render();
+            // Only restore focus if no popup is currently active
+            // Also check if the current focused element is a popup/dialog
+            const focused = this.screen.focused;
+            const isPopup = focused && (
+                this.activePopup === focused ||
+                focused.constructor.name.includes('Prompt') ||
+                focused.constructor.name.includes('Message') ||
+                focused.constructor.name.includes('Question')
+            );
+            
+            if (!this.activePopup && !isPopup) {
+                this.stockScreenContainer.focus();
+                this.screen.render();
+            }
         });
     }
 
-    private switchToScreen(screenIndex: number) {
-        if (screenIndex === this.currentScreen) return;
 
-        if (screenIndex === 0) {
-            // Switch to stock screen
-            this.newsScreen.hide();
-            this.stockScreenContainer.show();
-            this.stockScreenContainer.focus();
-            this.currentScreen = 0;
-        } else if (screenIndex === 1) {
-            // Switch to news screen
-            this.stockScreenContainer.hide();
-            this.newsScreen.show();
-            this.newsScreen.focus();
-            this.currentScreen = 1;
-        }
-        
-        this.screen.render();
-    }
 
     private setupKeyBindings() {
         // Quit commands
@@ -254,78 +325,32 @@ export class App {
             process.exit(0);
         });
 
-        // Tab navigation
-        this.screen.key(["tab"], () => {
-            const nextScreen = this.currentScreen === 0 ? 1 : 0;
-            this.switchToScreen(nextScreen);
-        });
 
-        this.screen.key(["S-tab"], () => {
-            const prevScreen = this.currentScreen === 0 ? 1 : 0;
-            this.switchToScreen(prevScreen);
-        });
 
-        // Leader key (ctrl+x) handling
-        this.screen.key(["C-x"], () => {
-            this.leaderPressed = true;
-            // Reset leader state after 2 seconds if no follow-up key
-            setTimeout(() => {
-                this.leaderPressed = false;
-            }, 2000);
-        });
-
-        // Leader + number shortcuts
-        this.screen.key(["1"], () => {
-            if (this.leaderPressed) {
-                this.switchToScreen(0);
-                this.leaderPressed = false;
-            }
-        });
-
-        this.screen.key(["2"], () => {
-            if (this.leaderPressed) {
-                this.switchToScreen(1);
-                this.leaderPressed = false;
-            }
-        });
-
-        // Stock management shortcuts (only when on stock screen)
+        // Stock management shortcuts
         this.screen.key(["a", "enter"], () => {
-            if (this.currentScreen === 0) {
-                this.showAddStockDialog();
-            }
+            this.showAddStockDialog();
         });
 
         this.screen.key(["d", "backspace"], () => {
-            if (this.currentScreen === 0) {
-                this.deleteSelectedStock();
-            }
+            this.deleteSelectedStock();
         });
 
         this.screen.key(["r"], () => {
-            if (this.currentScreen === 0) {
-                this.loadWatchlist();
-                this.showMessage("Watchlist refreshed", "success");
-            } else {
-                // TODO: Refresh news
-                this.showMessage("News refresh not implemented yet", "warning");
-            }
+            this.showMessage("Refreshing stock prices...", "warning");
+            this.loadWatchlist();
         });
 
         // J/K navigation (vi-style) - blessed list already handles this with vi: true
         // But we can add up/down arrow support explicitly
         this.screen.key(["up", "k"], () => {
-            if (this.currentScreen === 0) {
-                this.watchlistWidget.up(1);
-                this.screen.render();
-            }
+            this.watchlistWidget.up(1);
+            this.screen.render();
         });
 
         this.screen.key(["down", "j"], () => {
-            if (this.currentScreen === 0) {
-                this.watchlistWidget.down(1);
-                this.screen.render();
-            }
+            this.watchlistWidget.down(1);
+            this.screen.render();
         });
     }
 }
