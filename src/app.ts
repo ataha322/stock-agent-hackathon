@@ -157,7 +157,7 @@ export class App {
             style: {
                 line: "cyan",
                 text: "white",
-                baseline: "white"
+                baseline: "cyan"
             },
             xLabelPadding: 3,
             xPadding: 5,
@@ -203,6 +203,11 @@ export class App {
         const items = stocks.map(stock => this.formatStockItem(stock));
         this.watchlistWidget.setItems(items);
         this.screen.render();
+
+        // Trigger chart update for first item if we have stocks
+        if (stocks.length > 0) {
+            this.updateChartForSelectedStock();
+        }
 
         // Refresh stock prices in background
         this.refreshStockPrices();
@@ -253,6 +258,12 @@ export class App {
         const updatedStocks = this.database.getAllStocks();
         const items = updatedStocks.map(stock => this.formatStockItem(stock));
         this.watchlistWidget.setItems(items);
+        
+        // Update chart for selected stock after price refresh
+        if (updatedStocks.length > 0) {
+            this.updateChartForSelectedStock();
+        }
+        
         this.screen.render();
 
         // Show summary message
@@ -374,7 +385,6 @@ export class App {
             right: 1,
             width: 40,
             height: "shrink",
-            label: ` ${type.toUpperCase()} `,
             border: {
                 type: "line",
             },
@@ -493,7 +503,6 @@ export class App {
         this.chart.setLabel(`${stock.ticker} - ${this.currentTimeRange.toUpperCase()}`);
         
         try {
-            this.showMessage(`Loading ${stock.ticker} chart...`, "warning");
             const chartData = await this.alphaVantage.getHistoricalData(stock.ticker, this.currentTimeRange);
             
             if (chartData.length === 0) {
@@ -528,7 +537,6 @@ export class App {
                 logger.info(`Chart data for ${stock.ticker}: ${yValues.length} points, range: $${yValues[0]} - $${yValues[yValues.length-1]}`);
                 
                 this.chart.setData([formattedData]);
-                this.showMessage(`Loaded ${stock.ticker} chart (${yValues.length} points)`, "success");
             }
             
             this.screen.render();
@@ -568,8 +576,6 @@ export class App {
             if (isNaN(date.getTime())) return "";
             
             switch (this.currentTimeRange) {
-                case "1d":
-                    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
                 case "1m":
                 case "3m":
                     return `${date.getMonth() + 1}/${date.getDate()}`;
