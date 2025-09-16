@@ -7,7 +7,7 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
 - **Runtime**: Bun
 - **Language**: Typescript
 - **TUI**: blessed.js
-- **Database**: SQLite (better-sqlite3)
+- **Database**: SQLite
 - **APIs**: Perplexity AI, Alpha Vantage (free tier)
 
 ## Hour-by-Hour Implementation Plan
@@ -20,6 +20,9 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
 - [x] Alpha Vantage API integration for stock prices
 - [x] Stock price display in TUI with color coding
 - [x] Real-time price updates with API validation
+- [x] Interactive stock charts with blessed-contrib
+- [x] Multiple time ranges (1d, 1m, 3m, 1y, 5y)
+- [x] Chart updates based on watchlist selection
 
 ### 3
 - [ ] Automated Perplexity queries for watchlist stocks
@@ -62,6 +65,7 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
 - `a`, `Enter` - Add stock to watchlist
 - `d`, `Backspace` - Delete selected stock
 - `r` - Refresh stock prices
+- `1-5` - Change chart time range (1d, 1m, 3m, 1y, 5y)
 - `q`, `ctrl+c` - Quit application
 - `↑/↓`, `k/j` - Navigate watchlist
 

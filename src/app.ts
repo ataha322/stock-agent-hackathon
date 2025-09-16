@@ -1,6 +1,7 @@
 import blessed from "blessed";
+import contrib from "blessed-contrib";
 import { WatchlistDatabase, type WatchlistItem } from "./database/watchlist";
-import { AlphaVantageService, type StockQuote } from "./services/alpha-vantage";
+import { AlphaVantageService, type StockQuote, type TimeRange, type ChartDataPoint } from "./services/alpha-vantage";
 import { logger } from "./utils/logger";
 
 export class App {
@@ -8,6 +9,11 @@ export class App {
     private stockScreenContainer!: blessed.Widgets.BoxElement;
     private watchlistWidget!: blessed.Widgets.ListElement;
     private statusLine!: blessed.Widgets.BoxElement;
+    private chartContainer!: blessed.Widgets.BoxElement;
+    private chart!: any; // blessed-contrib line chart
+    private timeRangeSelector!: blessed.Widgets.BoxElement;
+    private currentTimeRange: TimeRange = "1m";
+    private selectedStock: string | null = null;
 
     private database!: WatchlistDatabase;
     private alphaVantage!: AlphaVantageService;
@@ -16,6 +22,7 @@ export class App {
     constructor() {
         this.database = new WatchlistDatabase();
         this.alphaVantage = new AlphaVantageService();
+        this.alphaVantage.setDatabase(this.database); // Connect database to API service
         this.screen = blessed.screen({
             smartCSR: true,
             title: "Stock Watchlist Monitor",
@@ -25,17 +32,30 @@ export class App {
         this.setupScreens();
         this.setupKeyBindings();
         this.loadWatchlist().catch((error) => logger.error("Failed to load watchlist:", error));
+        
+        // Clean up expired cache on startup
+        this.alphaVantage.cleanupExpiredCache();
+        
         this.screen.render();
     }
 
     private setupScreens() {
-        // Stock screen container
-        this.stockScreenContainer = blessed.box({
-            label: " Stock Watchlist ",
+        // Main container for layout
+        const mainContainer = blessed.box({
             top: "center",
-            left: "center",
+            left: "center", 
             width: "95%",
             height: "95%",
+        });
+
+        // Left panel - Stock watchlist
+        this.stockScreenContainer = blessed.box({
+            parent: mainContainer,
+            label: " Stock Watchlist ",
+            top: 0,
+            left: 0,
+            width: "25%",
+            height: "100%",
             border: {
                 type: "line",
             },
@@ -52,13 +72,13 @@ export class App {
             focusable: true,
         });
 
-        // Watchlist widget (inside the container)
+        // Watchlist widget (inside the left container)
         this.watchlistWidget = blessed.list({
             parent: this.stockScreenContainer,
-            top: "center",
-            left: "center",
-            width: "94%",
-            height: "94%",
+            top: 1,
+            left: 1,
+            width: "100%-2",
+            height: "100%-4",
             items: ["Loading..."],
             keys: true,
             vi: true,
@@ -82,22 +102,92 @@ export class App {
             },
         });
 
-        // Status line for instructions
+        // Status line for instructions (left panel)
         this.statusLine = blessed.box({
             parent: this.stockScreenContainer,
             bottom: 0,
             left: 1,
-            width: "95%",
+            width: "100%-2",
             height: 1,
-            content: "a:Add | d:Delete | j/k:Navigate | r:Refresh | q:Quit",
+            content: "a:Add | d:Delete | j/k:Navigate | c:Chart | r:Refresh | 1-5:TimeRange | q:Quit",
             style: {
                 fg: "cyan",
             },
         });
 
-        this.screen.append(this.stockScreenContainer);
+        // Right panel - Chart container
+        this.chartContainer = blessed.box({
+            parent: mainContainer,
+            label: " Stock Chart ",
+            top: 0,
+            left: "25%",
+            width: "70%",
+            height: "100%",
+            border: {
+                type: "line",
+            },
+            style: {
+                border: {
+                    fg: "green",
+                },
+            },
+        });
+
+        // Time range selector
+        this.timeRangeSelector = blessed.box({
+            parent: this.chartContainer,
+            top: 1,
+            left: 1,
+            width: "100%-2",
+            height: 3,
+            content: "Time Range: [1m] | Press: 1=1m 2=3m 3=1y 4=5y",
+            tags: false,
+            style: {
+                fg: "cyan",
+            },
+        });
+
+        // Create the line chart
+        this.chart = contrib.line({
+            parent: this.chartContainer,
+            top: 4,
+            left: 1,
+            width: "100%-2",
+            height: "100%-5",
+            style: {
+                line: "cyan",
+                text: "white",
+                baseline: "white"
+            },
+            xLabelPadding: 3,
+            xPadding: 5,
+            showLegend: false,
+            wholeNumbersOnly: false,
+            label: "Select a stock to view chart"
+        });
+
+        // Handle watchlist selection to update chart
+        this.watchlistWidget.on('select', (item: any, index: number) => {
+            logger.info(`Selected stock at index ${index}: ${item}`);
+            this.updateChartForSelectedStock();
+        });
         
-        // Focus the initial screen
+        // Also handle key events for navigation
+        this.watchlistWidget.key(['enter', 'space'], () => {
+            this.updateChartForSelectedStock();
+        });
+
+        this.screen.append(mainContainer);
+        
+        // Initialize chart with sample data
+        this.chart.setData([{
+            title: "No Stock Selected",
+            x: ["1", "2", "3", "4", "5"],
+            y: [0, 0, 0, 0, 0],
+            style: { line: "gray" }
+        }]);
+
+        // Focus the watchlist initially
         this.stockScreenContainer.focus();
     }
 
@@ -341,16 +431,176 @@ export class App {
             this.loadWatchlist();
         });
 
+        // Time range selection (1-4 keys)
+        this.screen.key(["1"], () => {
+            this.setTimeRange("1m");
+        });
+
+        this.screen.key(["2"], () => {
+            this.setTimeRange("3m");
+        });
+
+        this.screen.key(["3"], () => {
+            this.setTimeRange("1y");
+        });
+
+        this.screen.key(["4"], () => {
+            this.setTimeRange("5y");
+        });
+
+        // Manual chart update trigger
+        this.screen.key(["c"], () => {
+            this.updateChartForSelectedStock();
+        });
+
         // J/K navigation (vi-style) - blessed list already handles this with vi: true
-        // But we can add up/down arrow support explicitly
+        // But we can add up/down arrow support explicitly and trigger chart updates
         this.screen.key(["up", "k"], () => {
             this.watchlistWidget.up(1);
             this.screen.render();
+            // Trigger chart update after a short delay
+            setTimeout(() => this.updateChartForSelectedStock(), 100);
         });
 
         this.screen.key(["down", "j"], () => {
             this.watchlistWidget.down(1);
             this.screen.render();
+            // Trigger chart update after a short delay
+            setTimeout(() => this.updateChartForSelectedStock(), 100);
         });
+    }
+
+    private async updateChartForSelectedStock() {
+        const selectedIndex = (this.watchlistWidget as any).selected || 0;
+        const stocks = this.database.getAllStocks();
+        
+        if (stocks.length === 0 || selectedIndex >= stocks.length) {
+            // Show empty chart
+            this.chart.setLabel("Select a stock to view chart");
+            this.chart.setData([{
+                title: "No Stock Selected",
+                x: [""],
+                y: [0],
+                style: { line: "gray" }
+            }]);
+            this.screen.render();
+            return;
+        }
+
+        const stock = stocks[selectedIndex];
+        if (!stock) return;
+
+        this.selectedStock = stock.ticker;
+        this.chart.setLabel(`${stock.ticker} - ${this.currentTimeRange.toUpperCase()}`);
+        
+        try {
+            this.showMessage(`Loading ${stock.ticker} chart...`, "warning");
+            const chartData = await this.alphaVantage.getHistoricalData(stock.ticker, this.currentTimeRange);
+            
+            if (chartData.length === 0) {
+                this.chart.setData([{
+                    title: stock.ticker,
+                    x: ["No Data"],
+                    y: [0],
+                    style: { line: "red" }
+                }]);
+                this.showMessage(`No chart data available for ${stock.ticker}`, "warning");
+            } else {
+                // Ensure we have valid data and limit points for better display
+                const maxPoints = 50;
+                const step = Math.max(1, Math.floor(chartData.length / maxPoints));
+                const limitedData = chartData.filter((_, index) => index % step === 0);
+                
+                // Format data for blessed-contrib - ensure no null values
+                const xLabels = limitedData.map(point => this.formatDateForChart(point.date)).filter(x => x && x !== "null");
+                const yValues = limitedData.map(point => point.price).filter(y => y !== null && !isNaN(y));
+                
+                if (xLabels.length === 0 || yValues.length === 0) {
+                    throw new Error("No valid data points after filtering");
+                }
+                
+                const formattedData = {
+                    title: stock.ticker,
+                    x: xLabels,
+                    y: yValues,
+                    style: { line: "cyan" }
+                };
+                
+                logger.info(`Chart data for ${stock.ticker}: ${yValues.length} points, range: $${yValues[0]} - $${yValues[yValues.length-1]}`);
+                
+                this.chart.setData([formattedData]);
+                this.showMessage(`Loaded ${stock.ticker} chart (${yValues.length} points)`, "success");
+            }
+            
+            this.screen.render();
+        } catch (error) {
+            logger.error(`Failed to load chart data for ${stock.ticker}:`, error);
+            
+            let errorMessage = `Failed to load chart for ${stock.ticker}`;
+            if (error instanceof Error) {
+                if (error.message.includes("rate limit") || error.message.includes("25 requests per day")) {
+                    errorMessage = "API rate limit exceeded (25/day). Please wait until tomorrow.";
+                } else if (error.message.includes("No data available")) {
+                    errorMessage = `No historical data available for ${stock.ticker}`;
+                } else if (error.message.includes("Invalid symbol")) {
+                    errorMessage = `${stock.ticker} is not a valid symbol`;
+                }
+            }
+            
+            this.showMessage(errorMessage, "error");
+            
+            // Show informative error chart
+            this.chart.setData([{
+                title: "API Error",
+                x: ["Error"],
+                y: [0],
+                style: { line: "red" }
+            }]);
+            this.chart.setLabel(`${stock.ticker} - Error Loading Data`);
+            this.screen.render();
+        }
+    }
+
+    private formatDateForChart(dateString: string): string {
+        if (!dateString) return "";
+        
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return "";
+            
+            switch (this.currentTimeRange) {
+                case "1d":
+                    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+                case "1m":
+                case "3m":
+                    return `${date.getMonth() + 1}/${date.getDate()}`;
+                case "1y":
+                case "5y":
+                    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                default:
+                    return dateString.substring(0, 10); // Just the date part
+            }
+        } catch (error) {
+            logger.error(`Error formatting date ${dateString}:`, error);
+            return "";
+        }
+    }
+
+    private setTimeRange(range: TimeRange) {
+        this.currentTimeRange = range;
+        
+        // Update the time range display with simple text
+        const content = `Time Range: [${range.toUpperCase()}] | Press: 1=1m 2=3m 3=1y 4=5y`;
+        this.timeRangeSelector.setContent(content);
+        
+        // Update chart if a stock is selected
+        if (this.selectedStock) {
+            this.updateChartForSelectedStock();
+        } else {
+            // Try to update chart for current selection
+            this.updateChartForSelectedStock();
+        }
+        
+        this.screen.render();
     }
 }

@@ -12,6 +12,15 @@ export interface WatchlistItem {
     lastUpdated?: string;
 }
 
+export interface CacheItem {
+    id?: number;
+    ticker: string;
+    cacheType: string;
+    data: string;
+    cachedAt: string;
+    expiresAt: string;
+}
+
 export class WatchlistDatabase {
     private db: Database;
 
@@ -42,10 +51,25 @@ export class WatchlistDatabase {
             )
         `);
 
+        // Create cache table for Alpha Vantage API responses
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS alpha_vantage_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                cache_type TEXT NOT NULL,
+                data TEXT NOT NULL,
+                cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                UNIQUE(ticker, cache_type)
+            )
+        `);
+
         // Create indexes for better performance
         this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_ticker ON watchlist(ticker);
             CREATE INDEX IF NOT EXISTS idx_added_at ON watchlist(added_at);
+            CREATE INDEX IF NOT EXISTS idx_cache_ticker_type ON alpha_vantage_cache(ticker, cache_type);
+            CREATE INDEX IF NOT EXISTS idx_cache_expires ON alpha_vantage_cache(expires_at);
         `);
     }
 
@@ -105,6 +129,67 @@ export class WatchlistDatabase {
         } catch (error) {
             return false;
         }
+    }
+
+    // Cache management methods
+    setCacheData(ticker: string, cacheType: string, data: any, expiresInHours: number = 24): boolean {
+        try {
+            const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
+            const stmt = this.db.prepare(`
+                INSERT OR REPLACE INTO alpha_vantage_cache 
+                (ticker, cache_type, data, expires_at) 
+                VALUES (?, ?, ?, ?)
+            `);
+            stmt.run(ticker.toUpperCase(), cacheType, JSON.stringify(data), expiresAt);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    getCacheData(ticker: string, cacheType: string): any | null {
+        try {
+            const stmt = this.db.prepare(`
+                SELECT data, expires_at 
+                FROM alpha_vantage_cache 
+                WHERE ticker = ? AND cache_type = ? AND expires_at > CURRENT_TIMESTAMP
+            `);
+            const result = stmt.get(ticker.toUpperCase(), cacheType) as { data: string; expires_at: string } | undefined;
+            
+            if (result) {
+                return JSON.parse(result.data);
+            }
+            return null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    isCacheValid(ticker: string, cacheType: string): boolean {
+        const stmt = this.db.prepare(`
+            SELECT 1 FROM alpha_vantage_cache 
+            WHERE ticker = ? AND cache_type = ? AND expires_at > CURRENT_TIMESTAMP
+        `);
+        return !!stmt.get(ticker.toUpperCase(), cacheType);
+    }
+
+    clearExpiredCache(): number {
+        const stmt = this.db.prepare(`
+            DELETE FROM alpha_vantage_cache 
+            WHERE expires_at <= CURRENT_TIMESTAMP
+        `);
+        const result = stmt.run();
+        return result.changes;
+    }
+
+    getCacheStats(): { total: number; expired: number } {
+        const totalStmt = this.db.prepare("SELECT COUNT(*) as count FROM alpha_vantage_cache");
+        const expiredStmt = this.db.prepare("SELECT COUNT(*) as count FROM alpha_vantage_cache WHERE expires_at <= CURRENT_TIMESTAMP");
+        
+        const total = (totalStmt.get() as { count: number }).count;
+        const expired = (expiredStmt.get() as { count: number }).count;
+        
+        return { total, expired };
     }
 
     close() {
