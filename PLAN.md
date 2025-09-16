@@ -13,7 +13,7 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
 ## Hour-by-Hour Implementation Plan
 
 ### 1
-- [ ] Basic TUI layout with blessed.js. Mono-pane - 1 view per screen (like Vim). total of 2 screens - stock screen and news-aggregation screen.
+- [x] Basic TUI layout with blessed.js. Mono-pane - 1 view per screen (like Vim). total of 2 screens - stock screen and news-aggregation screen.
 - [ ] Watchlist CRUD operations (add/remove stocks)
 
 ### 2
