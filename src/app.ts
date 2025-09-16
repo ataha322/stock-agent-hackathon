@@ -8,7 +8,7 @@ export class App {
     private screen: blessed.Widgets.Screen;
     private stockScreenContainer!: blessed.Widgets.BoxElement;
     private watchlistWidget!: blessed.Widgets.ListElement;
-    private statusLine!: blessed.Widgets.BoxElement;
+    private hintKeys!: blessed.Widgets.BoxElement;
     private chartContainer!: blessed.Widgets.BoxElement;
     private chart!: any; // blessed-contrib line chart
     private timeRangeSelector!: blessed.Widgets.BoxElement;
@@ -54,7 +54,7 @@ export class App {
             label: " Stock Watchlist ",
             top: 0,
             left: 0,
-            width: "25%",
+            width: "22%",
             height: "100%",
             border: {
                 type: "line",
@@ -77,8 +77,8 @@ export class App {
             parent: this.stockScreenContainer,
             top: 1,
             left: 1,
-            width: "100%-2",
-            height: "100%-4",
+            width: "90%",
+            height: "60%",
             items: ["Loading..."],
             keys: true,
             vi: true,
@@ -86,7 +86,7 @@ export class App {
             tags: true,
             style: {
                 selected: {
-                    bg: "blue",
+                    bg: "green",
                     fg: "white",
                 },
                 focus: {
@@ -103,13 +103,13 @@ export class App {
         });
 
         // Status line for instructions (left panel)
-        this.statusLine = blessed.box({
+        this.hintKeys = blessed.box({
             parent: this.stockScreenContainer,
             bottom: 0,
             left: 1,
-            width: "100%-2",
-            height: 1,
-            content: "a:Add | d:Delete | j/k:Navigate | c:Chart | r:Refresh | 1-5:TimeRange | q:Quit",
+            width: "90%",
+            height: 7,
+            content: "a:    Add\nd:    Delete\nj/k:  Navigate\nc:    Chart\nr:    Refresh\n1-5:  TimeRange\nq:    Quit",
             style: {
                 fg: "cyan",
             },
@@ -120,8 +120,8 @@ export class App {
             parent: mainContainer,
             label: " Stock Chart ",
             top: 0,
-            left: "25%",
-            width: "70%",
+            left: "22%",
+            width: "78%",
             height: "100%",
             border: {
                 type: "line",
@@ -138,8 +138,8 @@ export class App {
             parent: this.chartContainer,
             top: 1,
             left: 1,
-            width: "100%-2",
-            height: 3,
+            width: "60%",
+            height: 1,
             content: "Time Range: [1m] | Press: 1=1m 2=3m 3=1y 4=5y",
             tags: false,
             style: {
@@ -152,8 +152,8 @@ export class App {
             parent: this.chartContainer,
             top: 4,
             left: 1,
-            width: "100%-2",
-            height: "100%-5",
+            width: "100%-3",
+            height: "100%-6",
             style: {
                 line: "cyan",
                 text: "white",
@@ -163,7 +163,6 @@ export class App {
             xPadding: 5,
             showLegend: false,
             wholeNumbersOnly: false,
-            label: "Select a stock to view chart"
         });
 
         // Handle watchlist selection to update chart
