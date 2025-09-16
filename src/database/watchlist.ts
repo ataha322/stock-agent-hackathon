@@ -192,6 +192,19 @@ export class WatchlistDatabase {
         return { total, expired };
     }
 
+    clearSpecificCache(ticker: string, cacheType: string): boolean {
+        try {
+            const stmt = this.db.prepare(`
+                DELETE FROM alpha_vantage_cache 
+                WHERE ticker = ? AND cache_type = ?
+            `);
+            const result = stmt.run(ticker.toUpperCase(), cacheType);
+            return result.changes > 0;
+        } catch (error) {
+            return false;
+        }
+    }
+
     close() {
         this.db.close();
     }

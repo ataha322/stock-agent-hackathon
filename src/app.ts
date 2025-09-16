@@ -1,28 +1,37 @@
 import blessed from "blessed";
 import contrib from "blessed-contrib";
 import { WatchlistDatabase, type WatchlistItem } from "./database/watchlist";
-import { AlphaVantageService, type StockQuote, type TimeRange, type ChartDataPoint } from "./services/alpha-vantage";
+import { AlphaVantageService, type TimeRange } from "./services/alpha-vantage";
+import { PerplexityService, type StockAnalysis } from "./services/perplexity";
 import { logger } from "./utils/logger";
 
 export class App {
     private screen: blessed.Widgets.Screen;
     private stockScreenContainer!: blessed.Widgets.BoxElement;
     private watchlistWidget!: blessed.Widgets.ListElement;
-    private hintKeys!: blessed.Widgets.BoxElement;
+    private statusLine!: blessed.Widgets.BoxElement;
     private chartContainer!: blessed.Widgets.BoxElement;
     private chart!: any; // blessed-contrib line chart
     private timeRangeSelector!: blessed.Widgets.BoxElement;
+    private newsContainer!: blessed.Widgets.BoxElement;
+    private recentNewsWidget!: blessed.Widgets.BoxElement;
+    private majorEventsWidget!: blessed.Widgets.BoxElement;
+    private valuationWidget!: blessed.Widgets.BoxElement;
     private currentTimeRange: TimeRange = "1m";
     private selectedStock: string | null = null;
+    private currentView: "chart" | "news" = "chart";
 
     private database!: WatchlistDatabase;
     private alphaVantage!: AlphaVantageService;
+    private perplexity!: PerplexityService;
     private activePopup: blessed.Widgets.BlessedElement | null = null;
 
     constructor() {
         this.database = new WatchlistDatabase();
         this.alphaVantage = new AlphaVantageService();
         this.alphaVantage.setDatabase(this.database); // Connect database to API service
+        this.perplexity = new PerplexityService();
+        this.perplexity.setDatabase(this.database); // Connect database to Perplexity service
         this.screen = blessed.screen({
             smartCSR: true,
             title: "Stock Watchlist Monitor",
@@ -35,6 +44,7 @@ export class App {
         
         // Clean up expired cache on startup
         this.alphaVantage.cleanupExpiredCache();
+        this.perplexity.cleanupExpiredCache();
         
         this.screen.render();
     }
@@ -103,13 +113,13 @@ export class App {
         });
 
         // Status line for instructions (left panel)
-        this.hintKeys = blessed.box({
+        this.statusLine = blessed.box({
             parent: this.stockScreenContainer,
             bottom: 0,
             left: 1,
             width: "90%",
             height: 7,
-            content: "a:    Add\nd:    Delete\nj/k:  Navigate\nc:    Chart\nr:    Refresh\n1-5:  TimeRange\nq:    Quit",
+            content: "a:    Add | d: Delete\nj/k:  Navigate | r: Refresh\nTab:  Chart/News | c: Chart\n1-4:  TimeRange | q: Quit",
             style: {
                 fg: "cyan",
             },
@@ -133,14 +143,14 @@ export class App {
             },
         });
 
-        // Time range selector
+        // View selector (chart/news) 
         this.timeRangeSelector = blessed.box({
             parent: this.chartContainer,
             top: 1,
             left: 1,
-            width: "60%",
+            width: "100%-2",
             height: 1,
-            content: "Time Range: [1m] | Press: 1=1m 2=3m 3=1y 4=5y",
+            content: "[Chart View] | Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y",
             tags: false,
             style: {
                 fg: "cyan",
@@ -165,15 +175,117 @@ export class App {
             wholeNumbersOnly: false,
         });
 
-        // Handle watchlist selection to update chart
+        // News analysis container (initially hidden)
+        this.newsContainer = blessed.box({
+            parent: this.chartContainer,
+            top: 3,
+            left: 1,
+            width: "100%-2",
+            height: "100%-4",
+            hidden: true,
+        });
+
+        // Recent News section
+        this.recentNewsWidget = blessed.box({
+            parent: this.newsContainer,
+            label: " Recent News (7 days) ",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "33%",
+            border: {
+                type: "line",
+            },
+            style: {
+                border: {
+                    fg: "blue",
+                },
+            },
+            content: "Loading recent news...",
+            tags: true,
+            scrollable: true,
+            alwaysScroll: true,
+            scrollbar: {
+                ch: " ",
+                style: {
+                    bg: "blue",
+                },
+            },
+        });
+
+        // Major Events section
+        this.majorEventsWidget = blessed.box({
+            parent: this.newsContainer,
+            label: " Major Events (12 months) ",
+            top: "33%",
+            left: 0,
+            width: "100%",
+            height: "33%",
+            border: {
+                type: "line",
+            },
+            style: {
+                border: {
+                    fg: "yellow",
+                },
+            },
+            content: "Loading major events...",
+            tags: true,
+            scrollable: true,
+            alwaysScroll: true,
+            scrollbar: {
+                ch: " ",
+                style: {
+                    bg: "yellow",
+                },
+            },
+        });
+
+        // Valuation Assessment section
+        this.valuationWidget = blessed.box({
+            parent: this.newsContainer,
+            label: " Valuation Assessment ",
+            top: "66%",
+            left: 0,
+            width: "100%",
+            height: "34%",
+            border: {
+                type: "line",
+            },
+            style: {
+                border: {
+                    fg: "green",
+                },
+            },
+            content: "Loading valuation assessment...",
+            tags: true,
+            scrollable: true,
+            alwaysScroll: true,
+            scrollbar: {
+                ch: " ",
+                style: {
+                    bg: "green",
+                },
+            },
+        });
+
+        // Handle watchlist selection to update chart/news
         this.watchlistWidget.on('select', (item: any, index: number) => {
             logger.info(`Selected stock at index ${index}: ${item}`);
-            this.updateChartForSelectedStock();
+            if (this.currentView === "chart") {
+                this.updateChartForSelectedStock();
+            } else {
+                this.updateNewsForSelectedStock();
+            }
         });
         
         // Also handle key events for navigation
         this.watchlistWidget.key(['enter', 'space'], () => {
-            this.updateChartForSelectedStock();
+            if (this.currentView === "chart") {
+                this.updateChartForSelectedStock();
+            } else {
+                this.updateNewsForSelectedStock();
+            }
         });
 
         this.screen.append(mainContainer);
@@ -436,25 +548,43 @@ export class App {
         });
 
         this.screen.key(["r"], () => {
-            this.showMessage("Refreshing stock prices...", "warning");
-            this.loadWatchlist();
+            if (this.currentView === "news") {
+                this.showMessage("Refreshing news analysis...", "warning");
+                this.refreshNewsAnalysis();
+            } else {
+                this.showMessage("Refreshing stock prices...", "warning");
+                this.loadWatchlist();
+            }
         });
 
-        // Time range selection (1-4 keys)
+        // Tab switching between chart and news
+        this.screen.key(["tab"], () => {
+            this.toggleView();
+        });
+
+        // Time range selection (1-4 keys) - only work in chart view
         this.screen.key(["1"], () => {
-            this.setTimeRange("1m");
+            if (this.currentView === "chart") {
+                this.setTimeRange("1m");
+            }
         });
 
         this.screen.key(["2"], () => {
-            this.setTimeRange("3m");
+            if (this.currentView === "chart") {
+                this.setTimeRange("3m");
+            }
         });
 
         this.screen.key(["3"], () => {
-            this.setTimeRange("1y");
+            if (this.currentView === "chart") {
+                this.setTimeRange("1y");
+            }
         });
 
         this.screen.key(["4"], () => {
-            this.setTimeRange("5y");
+            if (this.currentView === "chart") {
+                this.setTimeRange("5y");
+            }
         });
 
         // Manual chart update trigger
@@ -607,5 +737,162 @@ export class App {
         }
         
         this.screen.render();
+    }
+
+    private toggleView() {
+        if (this.currentView === "chart") {
+            this.currentView = "news";
+            this.chart.hide();
+            this.newsContainer.show();
+            this.timeRangeSelector.setContent("[News View] | Tab: Switch to Chart | Loading news...");
+            this.updateNewsForSelectedStock();
+        } else {
+            this.currentView = "chart";
+            this.newsContainer.hide();
+            this.chart.show();
+            this.timeRangeSelector.setContent(`[Chart View] | Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y`);
+            this.updateChartForSelectedStock();
+        }
+        this.screen.render();
+    }
+
+    private async updateNewsForSelectedStock() {
+        const selectedIndex = (this.watchlistWidget as any).selected || 0;
+        const stocks = this.database.getAllStocks();
+        
+        if (stocks.length === 0 || selectedIndex >= stocks.length) {
+            this.recentNewsWidget.setContent("No stock selected for news analysis");
+            this.majorEventsWidget.setContent("No stock selected for news analysis");
+            this.valuationWidget.setContent("No stock selected for news analysis");
+            this.screen.render();
+            return;
+        }
+
+        const stock = stocks[selectedIndex];
+        if (!stock) return;
+
+        this.selectedStock = stock.ticker;
+        this.recentNewsWidget.setContent("Loading recent news...");
+        this.majorEventsWidget.setContent("Loading major events...");
+        this.valuationWidget.setContent("Loading valuation assessment...");
+        this.screen.render();
+        
+        try {
+            const analysis = await this.perplexity.getStockAnalysis(stock.ticker);
+            
+            if (!analysis) {
+                this.recentNewsWidget.setContent(`No analysis available for ${stock.ticker}`);
+                this.majorEventsWidget.setContent(`No analysis available for ${stock.ticker}`);
+                this.valuationWidget.setContent(`No analysis available for ${stock.ticker}`);
+                this.screen.render();
+                return;
+            }
+
+            this.updateNewsWidgets(analysis);
+            this.timeRangeSelector.setContent(`[News View] | Tab: Switch to Chart | ${stock.ticker} Analysis`);
+            this.screen.render();
+            
+        } catch (error) {
+            logger.error(`Failed to load news analysis for ${stock.ticker}:`, error);
+            
+            let errorMessage = `Failed to load news analysis for ${stock.ticker}`;
+            if (error instanceof Error) {
+                if (error.message.includes("rate limit") || error.message.includes("quota")) {
+                    errorMessage = "API rate limit exceeded. Please try again later.";
+                } else if (error.message.includes("API key")) {
+                    errorMessage = "Perplexity API key not configured. Check environment variables.";
+                }
+            }
+            
+            this.recentNewsWidget.setContent(errorMessage);
+            this.majorEventsWidget.setContent(errorMessage);
+            this.valuationWidget.setContent(errorMessage);
+            this.screen.render();
+        }
+    }
+
+    private updateNewsWidgets(analysis: StockAnalysis) {
+        // Update Recent News widget
+        const recentNewsContent = analysis.recentNews.length > 0 
+            ? analysis.recentNews.map(item => `• ${item}`).join('\n\n')
+            : "No recent news available";
+        this.recentNewsWidget.setContent(recentNewsContent);
+
+        // Update Major Events widget
+        const majorEventsContent = analysis.majorEvents.length > 0
+            ? analysis.majorEvents.map(item => `• ${item}`).join('\n\n')
+            : "No major events identified";
+        this.majorEventsWidget.setContent(majorEventsContent);
+
+        // Update Valuation Assessment widget
+        const valuationContent = analysis.valuationAssessment.length > 0
+            ? analysis.valuationAssessment.map(item => `• ${item}`).join('\n\n')
+            : "Valuation assessment unavailable";
+        this.valuationWidget.setContent(valuationContent);
+    }
+
+    private async refreshNewsAnalysis() {
+        const selectedIndex = (this.watchlistWidget as any).selected || 0;
+        const stocks = this.database.getAllStocks();
+        
+        if (stocks.length === 0 || selectedIndex >= stocks.length) {
+            this.showMessage("No stock selected for refresh", "warning");
+            return;
+        }
+
+        const stock = stocks[selectedIndex];
+        if (!stock) return;
+
+        this.selectedStock = stock.ticker;
+        
+        // Clear cache for this stock's analysis to force fresh API call
+        if (this.database) {
+            const cleared = this.database.clearSpecificCache(stock.ticker, 'analysis');
+            if (cleared) {
+                logger.info(`Cleared cached analysis for ${stock.ticker}`);
+            }
+        }
+
+        // Show loading state
+        this.recentNewsWidget.setContent("Refreshing recent news...");
+        this.majorEventsWidget.setContent("Refreshing major events...");
+        this.valuationWidget.setContent("Refreshing valuation assessment...");
+        this.screen.render();
+        
+        try {
+            const analysis = await this.perplexity.getStockAnalysis(stock.ticker);
+            
+            if (!analysis) {
+                this.recentNewsWidget.setContent(`No analysis available for ${stock.ticker}`);
+                this.majorEventsWidget.setContent(`No analysis available for ${stock.ticker}`);
+                this.valuationWidget.setContent(`No analysis available for ${stock.ticker}`);
+                this.showMessage("Failed to refresh analysis", "error");
+                this.screen.render();
+                return;
+            }
+
+            this.updateNewsWidgets(analysis);
+            this.timeRangeSelector.setContent(`[News View] | Tab: Switch to Chart | ${stock.ticker} Analysis (Refreshed)`);
+            this.showMessage("News analysis refreshed", "success");
+            this.screen.render();
+            
+        } catch (error) {
+            logger.error(`Failed to refresh news analysis for ${stock.ticker}:`, error);
+            
+            let errorMessage = `Failed to refresh analysis for ${stock.ticker}`;
+            if (error instanceof Error) {
+                if (error.message.includes("rate limit") || error.message.includes("quota")) {
+                    errorMessage = "API rate limit exceeded. Please try again later.";
+                } else if (error.message.includes("API key")) {
+                    errorMessage = "Perplexity API key not configured. Check environment variables.";
+                }
+            }
+            
+            this.recentNewsWidget.setContent(errorMessage);
+            this.majorEventsWidget.setContent(errorMessage);
+            this.valuationWidget.setContent(errorMessage);
+            this.showMessage("Failed to refresh analysis", "error");
+            this.screen.render();
+        }
     }
 }
