@@ -18,11 +18,12 @@ export class App {
     private majorEventsWidget!: blessed.Widgets.BoxElement;
     private valuationWidget!: blessed.Widgets.BoxElement;
     private eventsWidget!: blessed.Widgets.BoxElement;
-    private currentTimeRange: TimeRange = "1m";
+    private currentTimeRange: TimeRange = "1y";
     private selectedStock: string | null = null;
     private currentView: "chart" | "news" = "chart";
     private currentFocus: "stock" | "recent" | "major" | "valuation" | "events" = "stock";
-    private ongoingPerplexityCalls: Set<string> = new Set();
+    private ongoingNewsCalls: Set<string> = new Set();
+    private ongoingEventsCalls: Set<string> = new Set();
 
     private database!: WatchlistDatabase;
     private alphaVantage!: AlphaVantageService;
@@ -122,6 +123,7 @@ export class App {
             "n: Focus Recent News",
             "m: Focus Major Events", 
             "v: Focus Valuation",
+            "f: Focus Financial Events",
             "Tab: Chart/News",
             "1-4: Time Range",
             "q: Quit"
@@ -154,7 +156,6 @@ export class App {
         // Right panel - Chart container
         this.chartContainer = blessed.box({
             parent: mainContainer,
-            label: " Stock Chart ",
             top: 0,
             left: "22%",
             width: "78%",
@@ -358,15 +359,17 @@ export class App {
         // Handle watchlist selection to update chart/news
         this.watchlistWidget.on('select', (item: any, index: number) => {
             logger.info(`Selected stock at index ${index}: ${item}`);
-            // Always load analysis and events, then update displays based on current view
-            this.loadAnalysisAndEvents();
+            // Load both news and events asynchronously
+            this.loadNewsForSelectedStock();
+            this.loadEventsForSelectedStock();
             this.updateChartForSelectedStock();
         });
         
         // Also handle key events for navigation
         this.watchlistWidget.key(['enter', 'space'], () => {
-            // Always load analysis and events, then update displays based on current view
-            this.loadAnalysisAndEvents();
+            // Load both news and events asynchronously
+            this.loadNewsForSelectedStock();
+            this.loadEventsForSelectedStock();
             this.updateChartForSelectedStock();
         });
 
@@ -398,9 +401,12 @@ export class App {
         this.watchlistWidget.setItems(items);
         this.screen.render();
 
-        // Trigger chart update for first item if we have stocks
+        // Trigger chart update and load news/events for first item if we have stocks
         if (stocks.length > 0) {
             this.updateChartForSelectedStock();
+            // Load both news and events asynchronously for the first stock
+            this.loadNewsForSelectedStock();
+            this.loadEventsForSelectedStock();
         }
 
         // Refresh stock prices in background
@@ -635,8 +641,8 @@ export class App {
                 this.refreshNewsAnalysis();
             } else {
                 this.showMessage("Refreshing stock prices and events...", "warning");
-                this.loadWatchlist(); // Refresh stock prices
-                this.refreshNewsAnalysis(); // Also refresh analysis+events
+                this.refreshStockPrices(); // Refresh stock prices only (don't trigger event loading)
+                this.refreshEventsAnalysis(); // Only refresh events in chart view
             }
         });
 
@@ -800,7 +806,6 @@ export class App {
                 style: { line: "red" }
             }]);
             this.chart.setLabel(`${stock.ticker} - Error Loading Data`);
-            this.eventsWidget.setContent(`Failed to load events for ${stock.ticker}`);
             this.screen.render();
         }
     }
@@ -941,8 +946,9 @@ export class App {
                     this.watchlistWidget.down(1);
                 }
                 this.screen.render();
-                // Always load analysis and events, then update displays
-                this.loadAnalysisAndEvents();
+                // Load both news and events asynchronously, then update displays
+                this.loadNewsForSelectedStock();
+                this.loadEventsForSelectedStock();
                 this.updateChartForSelectedStock();
                 break;
             case "recent":
@@ -992,7 +998,7 @@ export class App {
         }
     }
 
-    private async loadAnalysisAndEvents() {
+    private async loadNewsForSelectedStock() {
         const selectedIndex = (this.watchlistWidget as any).selected || 0;
         const stocks = this.database.getAllStocks();
         
@@ -1000,7 +1006,6 @@ export class App {
             this.recentNewsWidget.setContent("No stock selected for news analysis");
             this.majorEventsWidget.setContent("No stock selected for news analysis");
             this.valuationWidget.setContent("No stock selected for news analysis");
-            this.eventsWidget.setContent("Select a stock to view events");
             this.screen.render();
             return;
         }
@@ -1011,8 +1016,8 @@ export class App {
         this.selectedStock = stock.ticker;
         
         // Check if there's already an ongoing call for this stock
-        if (this.ongoingPerplexityCalls.has(stock.ticker)) {
-            logger.info(`Skipping duplicate Perplexity call for ${stock.ticker} - already in progress`);
+        if (this.ongoingNewsCalls.has(stock.ticker)) {
+            logger.info(`Skipping duplicate news call for ${stock.ticker} - already in progress`);
             this.recentNewsWidget.setContent("Refreshing recent news...");
             this.majorEventsWidget.setContent("Refreshing major events...");
             this.valuationWidget.setContent("Refreshing valuation assessment...");
@@ -1021,30 +1026,27 @@ export class App {
         }
         
         // Mark this stock as having an ongoing call
-        logger.info(`Starting Perplexity analysis for ${stock.ticker}`);
-        this.ongoingPerplexityCalls.add(stock.ticker);
+        logger.info(`Starting news analysis for ${stock.ticker}`);
+        this.ongoingNewsCalls.add(stock.ticker);
         
         this.recentNewsWidget.setContent("Loading recent news...");
         this.majorEventsWidget.setContent("Loading major events...");
         this.valuationWidget.setContent("Loading valuation assessment...");
-        this.eventsWidget.setContent("Loading financial events...");
         this.screen.render();
         
         try {
-            const analysis = await this.perplexity.getStockAnalysis(stock.ticker);
+            // Get news analysis without events
+            const analysis = await this.getNewsAnalysisOnly(stock.ticker);
             
             if (!analysis) {
                 this.recentNewsWidget.setContent(`No analysis available for ${stock.ticker}`);
                 this.majorEventsWidget.setContent(`No analysis available for ${stock.ticker}`);
                 this.valuationWidget.setContent(`No analysis available for ${stock.ticker}`);
-                this.eventsWidget.setContent(`No events available for ${stock.ticker}`);
                 this.screen.render();
                 return;
             }
 
             this.updateNewsWidgets(analysis);
-            this.displayEventsForSelectedStock(analysis.events);
-            this.timeRangeSelector.setContent(`Tab: Switch to Chart | ${stock.ticker} Analysis`);
             this.screen.render();
             
         } catch (error) {
@@ -1062,12 +1064,228 @@ export class App {
             this.recentNewsWidget.setContent(errorMessage);
             this.majorEventsWidget.setContent(errorMessage);
             this.valuationWidget.setContent(errorMessage);
+            this.screen.render();
+        } finally {
+            // Remove the stock from ongoing calls set
+            logger.info(`Completed news analysis for ${stock.ticker}`);
+            this.ongoingNewsCalls.delete(stock.ticker);
+        }
+    }
+
+    private async loadEventsForSelectedStock() {
+        const selectedIndex = (this.watchlistWidget as any).selected || 0;
+        const stocks = this.database.getAllStocks();
+        
+        if (stocks.length === 0 || selectedIndex >= stocks.length) {
+            this.eventsWidget.setContent("Select a stock to view events");
+            this.screen.render();
+            return;
+        }
+
+        const stock = stocks[selectedIndex];
+        if (!stock) return;
+
+        this.selectedStock = stock.ticker;
+        
+        // Check if there's already an ongoing call for this stock
+        if (this.ongoingEventsCalls.has(stock.ticker)) {
+            logger.info(`Skipping duplicate events call for ${stock.ticker} - already in progress`);
+            this.eventsWidget.setContent("Refreshing financial events...");
+            this.screen.render();
+            return;
+        }
+        
+        // Mark this stock as having an ongoing call
+        logger.info(`Starting events loading for ${stock.ticker}`);
+        this.ongoingEventsCalls.add(stock.ticker);
+        
+        this.eventsWidget.setContent("Loading financial events...");
+        this.screen.render();
+        
+        try {
+            const events = await this.perplexity.getFinancialEvents(stock.ticker);
+            this.displayEventsForSelectedStock(events);
+            this.screen.render();
+            
+        } catch (error) {
+            logger.error(`Failed to load events for ${stock.ticker}:`, error);
             this.eventsWidget.setContent(`Failed to load events for ${stock.ticker}`);
             this.screen.render();
         } finally {
             // Remove the stock from ongoing calls set
-            logger.info(`Completed Perplexity analysis for ${stock.ticker}`);
-            this.ongoingPerplexityCalls.delete(stock.ticker);
+            logger.info(`Completed events loading for ${stock.ticker}`);
+            this.ongoingEventsCalls.delete(stock.ticker);
+        }
+    }
+
+    private async getNewsAnalysisOnly(ticker: string): Promise<StockAnalysis | null> {
+        try {
+            const upperTicker = ticker.toUpperCase();
+            
+            // Check database cache first (24-hour cache)
+            if (this.database) {
+                const cachedData = this.database.getCacheData(upperTicker, "analysis");
+                if (cachedData) {
+                    logger.info(`Using cached analysis data for ${upperTicker}`);
+                    return cachedData as StockAnalysis;
+                }
+            }
+
+            logger.info(`Making Perplexity API call for news analysis: ${upperTicker}`);
+            
+            const query = `Analyze ${upperTicker} stock with exactly these sections:
+1. Most recent news (past 7 days) - factual news, no stock analysis yet.
+2. Major events in past 12 months related to the stock or the company.
+3. Current valuation assessment - undervalued/fairly valued/overvalued with brief reasoning`;
+
+            const response = await fetch(this.perplexity['baseUrl'], {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${this.perplexity['apiKey']}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: "sonar-pro",
+                    messages: [
+                        {
+                            role: "user",
+                            content: query
+                        }
+                    ],
+                    max_tokens: 3000,
+                    temperature: 0.2,
+                    stream: false
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                logger.error(`Perplexity API error details: Status ${response.status}, Response: ${errorText}`);
+                throw new Error(`Perplexity API error (${response.status}): ${errorText}`);
+            }
+
+            const data = await response.json() as any;
+
+            if (!data.choices || data.choices.length === 0) {
+                throw new Error("No response from Perplexity API");
+            }
+
+            const content = data.choices[0]?.message?.content;
+            if (!content) {
+                throw new Error("Empty response from Perplexity API");
+            }
+            
+            const analysis = this.parseAnalysis(upperTicker, content);
+
+            // Cache the result for 24 hours
+            if (this.database) {
+                this.database.setCacheData(upperTicker, "analysis", analysis, 24);
+                logger.info(`Cached analysis data for ${upperTicker} for 24 hours`);
+            }
+
+            return analysis;
+
+        } catch (error) {
+            logger.error(`Error fetching analysis for ${ticker}:`, error);
+            throw error;
+        }
+    }
+
+    private parseAnalysis(ticker: string, content: string): StockAnalysis {
+        // Initialize with empty arrays
+        let recentNews: string[] = [];
+        let majorEvents: string[] = [];
+        let valuationAssessment: string[] = [];
+
+        try {
+            // Extract sections based on content patterns
+            const lines = content.split('\n').filter(line => line.trim());
+            
+            let currentSection = '';
+            let sectionContent: string[] = [];
+            
+            for (const line of lines) {
+                const trimmedLine = line.trim();
+                
+                if (trimmedLine.toLowerCase().includes('recent news') || 
+                    trimmedLine.toLowerCase().includes('1.')) {
+                    if (currentSection && sectionContent.length > 0) {
+                        this.assignToSection(currentSection, sectionContent, recentNews, majorEvents, valuationAssessment);
+                    }
+                    currentSection = 'recent';
+                    sectionContent = [];
+                } else if (trimmedLine.toLowerCase().includes('major events') || 
+                          trimmedLine.toLowerCase().includes('2.')) {
+                    if (currentSection && sectionContent.length > 0) {
+                        this.assignToSection(currentSection, sectionContent, recentNews, majorEvents, valuationAssessment);
+                    }
+                    currentSection = 'events';
+                    sectionContent = [];
+                } else if (trimmedLine.toLowerCase().includes('valuation') || 
+                          trimmedLine.toLowerCase().includes('3.')) {
+                    if (currentSection && sectionContent.length > 0) {
+                        this.assignToSection(currentSection, sectionContent, recentNews, majorEvents, valuationAssessment);
+                    }
+                    currentSection = 'valuation';
+                    sectionContent = [];
+                } else if (trimmedLine.startsWith('•') || trimmedLine.startsWith('-') || trimmedLine.startsWith('*')) {
+                    // This is a bullet point
+                    sectionContent.push(trimmedLine.replace(/^[•\-*]\s*/, ''));
+                } else if (trimmedLine.length > 10 && currentSection) {
+                    // This might be content without bullet points
+                    sectionContent.push(trimmedLine);
+                }
+            }
+            
+            // Don't forget the last section
+            if (currentSection && sectionContent.length > 0) {
+                this.assignToSection(currentSection, sectionContent, recentNews, majorEvents, valuationAssessment);
+            }
+            
+        } catch (error) {
+            logger.warn(`Error parsing analysis content for ${ticker}, using fallback`);
+            // Fallback: split content into 3 roughly equal parts
+            const allLines = content.split('\n').filter(line => line.trim());
+            const third = Math.ceil(allLines.length / 3);
+            recentNews = allLines.slice(0, third).map(line => line.trim()).filter(line => line);
+            majorEvents = allLines.slice(third, third * 2).map(line => line.trim()).filter(line => line);
+            valuationAssessment = allLines.slice(third * 2).map(line => line.trim()).filter(line => line);
+        }
+
+        // Ensure we have at least something in each section
+        if (recentNews.length === 0) recentNews = ["No recent news available"];
+        if (majorEvents.length === 0) majorEvents = ["No major events identified"];
+        if (valuationAssessment.length === 0) valuationAssessment = ["Valuation assessment unavailable"];
+
+        return {
+            ticker,
+            recentNews,
+            majorEvents,
+            valuationAssessment,
+            events: [], // Not used in news-only analysis
+            lastUpdated: new Date().toISOString()
+        };
+    }
+
+    private assignToSection(
+        section: string, 
+        content: string[], 
+        recentNews: string[], 
+        majorEvents: string[], 
+        valuationAssessment: string[]
+    ) {
+        const cleanContent = content.filter(item => item.trim().length > 0);
+        
+        switch (section) {
+            case 'recent':
+                recentNews.push(...cleanContent);
+                break;
+            case 'events':
+                majorEvents.push(...cleanContent);
+                break;
+            case 'valuation':
+                valuationAssessment.push(...cleanContent);
+                break;
         }
     }
 
@@ -1106,24 +1324,23 @@ export class App {
         this.selectedStock = stock.ticker;
         
         // Check if there's already an ongoing call for this stock
-        if (this.ongoingPerplexityCalls.has(stock.ticker)) {
+        if (this.ongoingNewsCalls.has(stock.ticker)) {
             logger.info(`Skipping duplicate refresh for ${stock.ticker} - already in progress`);
             this.showMessage("Analysis refresh already in progress", "warning");
             return;
         }
         
-        // Clear cache for this stock's analysis and events to force fresh API calls
+        // Clear cache for this stock's analysis only (not events) to force fresh API calls
         if (this.database) {
             const analysisCleared = this.database.clearSpecificCache(stock.ticker, 'analysis');
-            const eventsCleared = this.database.clearSpecificCache(stock.ticker, 'events');
-            if (analysisCleared || eventsCleared) {
-                logger.info(`Cleared cached data for ${stock.ticker} (analysis: ${analysisCleared}, events: ${eventsCleared})`);
+            if (analysisCleared) {
+                logger.info(`Cleared cached analysis data for ${stock.ticker}`);
             }
         }
 
         // Mark this stock as having an ongoing call
         logger.info(`Starting manual refresh for ${stock.ticker}`);
-        this.ongoingPerplexityCalls.add(stock.ticker);
+        this.ongoingNewsCalls.add(stock.ticker);
 
         // Show loading state
         this.recentNewsWidget.setContent("Refreshing recent news...");
@@ -1132,7 +1349,7 @@ export class App {
         this.screen.render();
         
         try {
-            const analysis = await this.perplexity.getStockAnalysis(stock.ticker);
+            const analysis = await this.getNewsAnalysisOnly(stock.ticker);
             
             if (!analysis) {
                 this.recentNewsWidget.setContent(`No analysis available for ${stock.ticker}`);
@@ -1144,7 +1361,6 @@ export class App {
             }
 
             this.updateNewsWidgets(analysis);
-            this.displayEventsForSelectedStock(analysis.events);
             this.timeRangeSelector.setContent(`Tab: Switch to Chart | ${stock.ticker} Analysis (Refreshed)`);
             this.showMessage("News analysis refreshed", "success");
             this.screen.render();
@@ -1164,12 +1380,73 @@ export class App {
             this.recentNewsWidget.setContent(errorMessage);
             this.majorEventsWidget.setContent(errorMessage);
             this.valuationWidget.setContent(errorMessage);
-            this.eventsWidget.setContent(`Failed to load events for ${stock.ticker}`);
             this.showMessage("Failed to refresh analysis", "error");
             this.screen.render();
         } finally {
             // Remove the stock from ongoing calls set
-            this.ongoingPerplexityCalls.delete(stock.ticker);
+            this.ongoingNewsCalls.delete(stock.ticker);
+        }
+    }
+
+    private async refreshEventsAnalysis() {
+        const selectedIndex = (this.watchlistWidget as any).selected || 0;
+        const stocks = this.database.getAllStocks();
+        
+        if (stocks.length === 0 || selectedIndex >= stocks.length) {
+            this.showMessage("No stock selected for refresh", "warning");
+            return;
+        }
+
+        const stock = stocks[selectedIndex];
+        if (!stock) return;
+
+        this.selectedStock = stock.ticker;
+        
+        // Check if there's already an ongoing call for this stock
+        if (this.ongoingEventsCalls.has(stock.ticker)) {
+            logger.info(`Skipping duplicate events refresh for ${stock.ticker} - already in progress`);
+            this.showMessage("Events refresh already in progress", "warning");
+            return;
+        }
+        
+        // Clear cache for this stock's events to force fresh API calls
+        if (this.database) {
+            const eventsCleared = this.database.clearSpecificCache(stock.ticker, 'events');
+            logger.info(`Cache clear for ${stock.ticker} events: ${eventsCleared ? 'SUCCESS' : 'NO_CACHE_TO_CLEAR'}`);
+        }
+
+        // Mark this stock as having an ongoing call
+        logger.info(`Starting manual events refresh for ${stock.ticker}`);
+        this.ongoingEventsCalls.add(stock.ticker);
+
+        // Show loading state
+        this.eventsWidget.setContent("Refreshing financial events...");
+        this.screen.render();
+        
+        try {
+            const events = await this.perplexity.getFinancialEvents(stock.ticker);
+            this.displayEventsForSelectedStock(events);
+            this.showMessage("Financial events refreshed", "success");
+            this.screen.render();
+            
+        } catch (error) {
+            logger.error(`Failed to refresh events for ${stock.ticker}:`, error);
+            
+            let errorMessage = `Failed to refresh events for ${stock.ticker}`;
+            if (error instanceof Error) {
+                if (error.message.includes("rate limit") || error.message.includes("quota")) {
+                    errorMessage = "API rate limit exceeded. Please try again later.";
+                } else if (error.message.includes("API key")) {
+                    errorMessage = "Perplexity API key not configured. Check environment variables.";
+                }
+            }
+            
+            this.eventsWidget.setContent(errorMessage);
+            this.showMessage("Failed to refresh events", "error");
+            this.screen.render();
+        } finally {
+            // Remove the stock from ongoing calls set
+            this.ongoingEventsCalls.delete(stock.ticker);
         }
     }
 }

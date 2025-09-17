@@ -32,23 +32,9 @@ A TUI-based stock monitoring terminal that uses Perplexity AI for intelligent ne
 ### 4
 - [x] Keyboard shortcuts and navigation
 - [x] Error handling and loading states
-- [ ] make perplexity hyperlinks (like "[1]") clickable
-- [ ] Clean up UI styling
-- [ ] Test full workflow
 
 ### 5
-- [ ] Add another AI feature - when refreshing the news or opening them for the first time - make another perplexity query for impactful financial events and corresponding time frames. Map those time frames on the chart (change colors and include hyperlinks if possible).
-
-## Bugs to fix:
-
-### 1. reproduction steps
-1. switch to news view
-2. hit 'r' to refresh the stock news with perplexity
-3. while they're refreshing, switch to a different stock.
-4. switch back to the original stock.
-5. The app will start a second request to perplexity to update the news.
-Fix: remember that the request is ongoing and don't make a second request if so, just display Refreshin <widget>... like code already does.
-
+- [x] Add another AI feature - when refreshing the news or opening them for the first time - make another perplexity query for impactful financial events and corresponding time frames. Map those time frames on the chart (change colors and include hyperlinks if possible).
 
 ## Key Features to Implement
 

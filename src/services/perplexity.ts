@@ -239,8 +239,8 @@ Format as: DATE | DESCRIPTION | IMPACT`;
                 }
             }
             
-            // Sort events by date (most recent first)
-            events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            // Sort events by date (oldest first)
+            events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
             
         } catch (error) {
             logger.warn(`Error parsing financial events: ${error}`);
