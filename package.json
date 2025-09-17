@@ -12,6 +12,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@paid-ai/paid-node": "^0.2.0",
     "blessed": "^0.1.81",
     "blessed-contrib": "^4.11.0",
     "winston": "^3.17.0"

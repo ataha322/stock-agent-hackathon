@@ -3,6 +3,7 @@ import contrib from "blessed-contrib";
 import { WatchlistDatabase, type WatchlistItem } from "./database/watchlist";
 import { AlphaVantageService, type TimeRange } from "./services/alpha-vantage";
 import { PerplexityService, type StockAnalysis, type FinancialEvent } from "./services/perplexity";
+import { sendPaidSignal, NEWS_SIGNAL, FINANCIAL_EVENT_SIGNAL } from "./services/paid";
 import { logger } from "./utils/logger";
 
 export class App {
@@ -705,11 +706,6 @@ export class App {
             }
         });
 
-        // Manual chart update trigger
-        this.screen.key(["c"], () => {
-            this.updateChartForSelectedStock();
-        });
-
         // J/K navigation (vi-style) - respects current focus
         this.screen.key(["up", "k"], () => {
             this.handleFocusedNavigation("up");
@@ -1182,6 +1178,18 @@ export class App {
                 this.database.setCacheData(upperTicker, "analysis", analysis, 24);
                 logger.info(`Cached analysis data for ${upperTicker} for 24 hours`);
             }
+
+            logger.info(`Sending usage cost for news analysis to Paid: ${data.usage.cost.total_cost}`);
+            sendPaidSignal(NEWS_SIGNAL, {
+                costData: {
+                    vendor: "perplexity", // can be anything
+                    cost: {
+                        amount: data.usage.cost.total_cost,
+                        currency: "USD",
+                    },
+                },
+            });
+
 
             return analysis;
 

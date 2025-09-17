@@ -1,5 +1,6 @@
 import { logger } from "../utils/logger";
 import { WatchlistDatabase } from "../database/watchlist";
+import { sendPaidSignal, NEWS_SIGNAL, FINANCIAL_EVENT_SIGNAL } from "./paid";
 
 export interface FinancialEvent {
     date: string; // YYYY-MM-DD format
@@ -37,6 +38,13 @@ export interface PerplexityResponse {
         prompt_tokens: number;
         completion_tokens: number;
         total_tokens: number;
+        search_context_size: string;
+        cost: {
+            input_tokens_cost: number;
+            output_tokens_cost: number;
+            request_cost: number;
+            total_cost: number;
+        }
     };
 }
 
@@ -126,6 +134,17 @@ export class PerplexityService {
                 logger.info(`Cached analysis data for ${upperTicker} for 24 hours`);
             }
 
+            logger.info(`Sending usage cost for news analysis to Paid: ${data.usage.cost.total_cost}`);
+            sendPaidSignal(NEWS_SIGNAL, {
+                costData: {
+                    vendor: "perplexity", // can be anything
+                    cost: {
+                        amount: data.usage.cost.total_cost,
+                        currency: "USD",
+                    },
+                },
+            });
+
             return analysis;
 
         } catch (error) {
@@ -208,6 +227,17 @@ Format as: DATE | DESCRIPTION | IMPACT`;
                 this.database.setCacheData(upperTicker, "events", events, 24);
                 logger.info(`Cached events data for ${upperTicker} for 24 hours`);
             }
+
+            logger.info(`Sending usage cost for financial events to Paid: ${data.usage.cost.total_cost}`);
+            sendPaidSignal(FINANCIAL_EVENT_SIGNAL, {
+                costData: {
+                    vendor: "perplexity", // can be anything
+                    cost: {
+                        amount: data.usage.cost.total_cost,
+                        currency: "USD",
+                    },
+                },
+            });
 
             return events;
 
