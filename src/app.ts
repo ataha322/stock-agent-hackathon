@@ -148,7 +148,7 @@ export class App {
             parent: this.chartContainer,
             top: 1,
             left: 1,
-            width: "100%-2",
+            width: "100%-6",
             height: 1,
             content: "[Chart View] | Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y",
             tags: false,
@@ -180,8 +180,8 @@ export class App {
             parent: this.chartContainer,
             top: 3,
             left: 1,
-            width: "100%-2",
-            height: "100%-4",
+            width: "100%-5",
+            height: "100%-5",
             hidden: true,
         });
 
