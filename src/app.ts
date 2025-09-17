@@ -62,7 +62,7 @@ export class App {
         // Left panel - Stock watchlist
         this.stockScreenContainer = blessed.box({
             parent: mainContainer,
-            label: " Stock Watchlist ",
+            label: " {red-fg}[S]{/red-fg}tock Watchlist ",
             top: 0,
             left: 0,
             width: "22%",
@@ -76,11 +76,12 @@ export class App {
                 },
                 focus: {
                     border: {
-                        fg: "magenta",
+                        fg: "lightyellow",
                     },
                 },
             },
             focusable: true,
+            tags: true,
         });
 
         // Watchlist widget (inside the left container)
@@ -100,15 +101,11 @@ export class App {
                     bg: "green",
                     fg: "white",
                 },
-                focus: {
-                    bg: "yellow",
-                    fg: "black",
-                },
             },
             scrollbar: {
                 ch: " ",
                 style: {
-                    bg: "yellow",
+                    bg: "lightcyan",
                 },
             },
         });
@@ -215,7 +212,7 @@ export class App {
         // Recent News section
         this.recentNewsWidget = blessed.box({
             parent: this.newsContainer,
-            label: " Recent News (7 days) ",
+            label: " Recent {red-fg}[N]{/red-fg}ews (7 days) ",
             top: 0,
             left: 0,
             width: "100%",
@@ -225,11 +222,11 @@ export class App {
             },
             style: {
                 border: {
-                    fg: "blue",
+                    fg: "green",
                 },
                 focus: {
                     border: {
-                        fg: "magenta",
+                        fg: "lightyellow",
                     },
                 },
             },
@@ -240,7 +237,7 @@ export class App {
             scrollbar: {
                 ch: " ",
                 style: {
-                    bg: "blue",
+                    bg: "lightcyan",
                 },
             },
             focusable: true,
@@ -252,7 +249,7 @@ export class App {
         // Major Events section
         this.majorEventsWidget = blessed.box({
             parent: this.newsContainer,
-            label: " Major Events (12 months) ",
+            label: " {red-fg}[M]{/red-fg}ajor Events (12 months) ",
             top: "33%",
             left: 0,
             width: "100%",
@@ -262,11 +259,11 @@ export class App {
             },
             style: {
                 border: {
-                    fg: "yellow",
+                    fg: "green",
                 },
                 focus: {
                     border: {
-                        fg: "magenta",
+                        fg: "lightyellow",
                     },
                 },
             },
@@ -277,7 +274,7 @@ export class App {
             scrollbar: {
                 ch: " ",
                 style: {
-                    bg: "yellow",
+                    bg: "lightcyan",
                 },
             },
             focusable: true,
@@ -289,7 +286,7 @@ export class App {
         // Valuation Assessment section
         this.valuationWidget = blessed.box({
             parent: this.newsContainer,
-            label: " Valuation Assessment ",
+            label: " {red-fg}[V]{/red-fg}aluation Assessment ",
             top: "66%",
             left: 0,
             width: "100%",
@@ -303,7 +300,7 @@ export class App {
                 },
                 focus: {
                     border: {
-                        fg: "magenta",
+                        fg: "lightyellow",
                     },
                 },
             },
@@ -314,7 +311,7 @@ export class App {
             scrollbar: {
                 ch: " ",
                 style: {
-                    bg: "green",
+                    bg: "lightcyan",
                 },
             },
             focusable: true,
