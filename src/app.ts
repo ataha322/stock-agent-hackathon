@@ -20,6 +20,7 @@ export class App {
     private currentTimeRange: TimeRange = "1m";
     private selectedStock: string | null = null;
     private currentView: "chart" | "news" = "chart";
+    private currentFocus: "stock" | "recent" | "major" | "valuation" = "stock";
 
     private database!: WatchlistDatabase;
     private alphaVantage!: AlphaVantageService;
@@ -75,7 +76,7 @@ export class App {
                 },
                 focus: {
                     border: {
-                        fg: "yellow",
+                        fg: "magenta",
                     },
                 },
             },
@@ -116,8 +117,12 @@ export class App {
         const controlItems = [
             "a: Add Stock",
             "d: Delete Stock", 
-            "j/k: Navigate",
             "r: Refresh",
+            "j/k: Navigate/Scroll",
+            "s: Focus Stock List",
+            "n: Focus Recent News",
+            "m: Focus Major Events", 
+            "v: Focus Valuation",
             "Tab: Chart/News",
             "1-4: Time Range",
             "q: Quit"
@@ -222,6 +227,11 @@ export class App {
                 border: {
                     fg: "blue",
                 },
+                focus: {
+                    border: {
+                        fg: "magenta",
+                    },
+                },
             },
             content: "Loading recent news...",
             tags: true,
@@ -233,6 +243,10 @@ export class App {
                     bg: "blue",
                 },
             },
+            focusable: true,
+            keys: true,
+            vi: true,
+            mouse: true,
         });
 
         // Major Events section
@@ -250,6 +264,11 @@ export class App {
                 border: {
                     fg: "yellow",
                 },
+                focus: {
+                    border: {
+                        fg: "magenta",
+                    },
+                },
             },
             content: "Loading major events...",
             tags: true,
@@ -261,6 +280,10 @@ export class App {
                     bg: "yellow",
                 },
             },
+            focusable: true,
+            keys: true,
+            vi: true,
+            mouse: true,
         });
 
         // Valuation Assessment section
@@ -278,6 +301,11 @@ export class App {
                 border: {
                     fg: "green",
                 },
+                focus: {
+                    border: {
+                        fg: "magenta",
+                    },
+                },
             },
             content: "Loading valuation assessment...",
             tags: true,
@@ -289,6 +317,10 @@ export class App {
                     bg: "green",
                 },
             },
+            focusable: true,
+            keys: true,
+            vi: true,
+            mouse: true,
         });
 
         // Handle watchlist selection to update chart/news
@@ -584,6 +616,29 @@ export class App {
             this.toggleView();
         });
 
+        // Focus switching key bindings
+        this.screen.key(["s", "S"], () => {
+            this.setFocus("stock");
+        });
+
+        this.screen.key(["n", "N"], () => {
+            if (this.currentView === "news") {
+                this.setFocus("recent");
+            }
+        });
+
+        this.screen.key(["m", "M"], () => {
+            if (this.currentView === "news") {
+                this.setFocus("major");
+            }
+        });
+
+        this.screen.key(["v", "V"], () => {
+            if (this.currentView === "news") {
+                this.setFocus("valuation");
+            }
+        });
+
         // Time range selection (1-4 keys) - only work in chart view
         this.screen.key(["1"], () => {
             if (this.currentView === "chart") {
@@ -614,28 +669,13 @@ export class App {
             this.updateChartForSelectedStock();
         });
 
-        // J/K navigation (vi-style) - blessed list already handles this with vi: true
-        // But we can add up/down arrow support explicitly and trigger appropriate updates
+        // J/K navigation (vi-style) - respects current focus
         this.screen.key(["up", "k"], () => {
-            this.watchlistWidget.up(1);
-            this.screen.render();
-            // Trigger appropriate update based on current view
-            if (this.currentView === "chart") {
-                this.updateChartForSelectedStock();
-            } else {
-                this.updateNewsForSelectedStock();
-            }
+            this.handleFocusedNavigation("up");
         });
 
         this.screen.key(["down", "j"], () => {
-            this.watchlistWidget.down(1);
-            this.screen.render();
-            // Trigger appropriate update based on current view
-            if (this.currentView === "chart") {
-                this.updateChartForSelectedStock();
-            } else {
-                this.updateNewsForSelectedStock();
-            }
+            this.handleFocusedNavigation("down");
         });
     }
 
@@ -774,16 +814,102 @@ export class App {
             this.currentView = "news";
             this.chart.hide();
             this.newsContainer.show();
-            this.timeRangeSelector.setContent("[News View] | Tab: Switch to Chart | Loading news...");
+            this.timeRangeSelector.setContent("[News View] | Tab: Switch to Chart | s/n/m/v: Focus | j/k: Navigate/Scroll");
             this.updateNewsForSelectedStock();
+            // Set focus back to stock list by default when switching to news
+            this.setFocus("stock");
         } else {
             this.currentView = "chart";
             this.newsContainer.hide();
             this.chart.show();
             this.timeRangeSelector.setContent(`[Chart View] | Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y`);
             this.updateChartForSelectedStock();
+            // Ensure stock list is focused in chart view
+            this.setFocus("stock");
         }
         this.screen.render();
+    }
+
+    private setFocus(focusElement: "stock" | "recent" | "major" | "valuation") {
+        this.currentFocus = focusElement;
+        
+        switch (focusElement) {
+            case "stock":
+                this.stockScreenContainer.focus();
+                break;
+            case "recent":
+                if (this.currentView === "news") {
+                    this.recentNewsWidget.focus();
+                }
+                break;
+            case "major":
+                if (this.currentView === "news") {
+                    this.majorEventsWidget.focus();
+                }
+                break;
+            case "valuation":
+                if (this.currentView === "news") {
+                    this.valuationWidget.focus();
+                }
+                break;
+        }
+        
+        this.screen.render();
+    }
+
+
+
+    private handleFocusedNavigation(direction: "up" | "down") {
+        switch (this.currentFocus) {
+            case "stock":
+                // Navigate stock list and update appropriate view
+                if (direction === "up") {
+                    this.watchlistWidget.up(1);
+                } else {
+                    this.watchlistWidget.down(1);
+                }
+                this.screen.render();
+                // Trigger appropriate update based on current view
+                if (this.currentView === "chart") {
+                    this.updateChartForSelectedStock();
+                } else {
+                    this.updateNewsForSelectedStock();
+                }
+                break;
+            case "recent":
+                // Scroll the recent news widget
+                if (this.currentView === "news") {
+                    if (direction === "up") {
+                        this.recentNewsWidget.scroll(-1);
+                    } else {
+                        this.recentNewsWidget.scroll(1);
+                    }
+                    this.screen.render();
+                }
+                break;
+            case "major":
+                // Scroll the major events widget
+                if (this.currentView === "news") {
+                    if (direction === "up") {
+                        this.majorEventsWidget.scroll(-1);
+                    } else {
+                        this.majorEventsWidget.scroll(1);
+                    }
+                    this.screen.render();
+                }
+                break;
+            case "valuation":
+                // Scroll the valuation widget
+                if (this.currentView === "news") {
+                    if (direction === "up") {
+                        this.valuationWidget.scroll(-1);
+                    } else {
+                        this.valuationWidget.scroll(1);
+                    }
+                    this.screen.render();
+                }
+                break;
+        }
     }
 
     private async updateNewsForSelectedStock() {
