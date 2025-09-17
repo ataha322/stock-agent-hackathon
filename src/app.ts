@@ -9,7 +9,7 @@ export class App {
     private screen: blessed.Widgets.Screen;
     private stockScreenContainer!: blessed.Widgets.BoxElement;
     private watchlistWidget!: blessed.Widgets.ListElement;
-    private statusLine!: blessed.Widgets.BoxElement;
+    private controlsList!: blessed.Widgets.ListElement;
     private chartContainer!: blessed.Widgets.BoxElement;
     private chart!: any; // blessed-contrib line chart
     private timeRangeSelector!: blessed.Widgets.BoxElement;
@@ -112,17 +112,39 @@ export class App {
             },
         });
 
-        // Status line for instructions (left panel)
-        this.statusLine = blessed.box({
+        // Controls list for instructions (left panel)
+        const controlItems = [
+            "a: Add Stock",
+            "d: Delete Stock", 
+            "j/k: Navigate",
+            "r: Refresh",
+            "Tab: Chart/News",
+            "1-4: Time Range",
+            "q: Quit"
+        ];
+        
+        this.controlsList = blessed.list({
             parent: this.stockScreenContainer,
+            label: " Controls ",
             bottom: 0,
             left: 1,
             width: "90%",
-            height: 7,
-            content: "a:    Add | d: Delete\nj/k:  Navigate | r: Refresh\nTab:  Chart/News | c: Chart\n1-4:  TimeRange | q: Quit",
+            height: controlItems.length + 2, // +2 for top/bottom borders
+            border: {
+                type: "line",
+            },
             style: {
                 fg: "cyan",
+                border: {
+                    fg: "cyan",
+                },
+                item: {
+                    fg: "white",
+                },
             },
+            items: controlItems,
+            interactive: false,
+            mouse: false,
         });
 
         // Right panel - Chart container
