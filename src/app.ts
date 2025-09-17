@@ -593,19 +593,27 @@ export class App {
         });
 
         // J/K navigation (vi-style) - blessed list already handles this with vi: true
-        // But we can add up/down arrow support explicitly and trigger chart updates
+        // But we can add up/down arrow support explicitly and trigger appropriate updates
         this.screen.key(["up", "k"], () => {
             this.watchlistWidget.up(1);
             this.screen.render();
-            // Trigger chart update after a short delay
-            setTimeout(() => this.updateChartForSelectedStock(), 100);
+            // Trigger appropriate update based on current view
+            if (this.currentView === "chart") {
+                this.updateChartForSelectedStock();
+            } else {
+                this.updateNewsForSelectedStock();
+            }
         });
 
         this.screen.key(["down", "j"], () => {
             this.watchlistWidget.down(1);
             this.screen.render();
-            // Trigger chart update after a short delay
-            setTimeout(() => this.updateChartForSelectedStock(), 100);
+            // Trigger appropriate update based on current view
+            if (this.currentView === "chart") {
+                this.updateChartForSelectedStock();
+            } else {
+                this.updateNewsForSelectedStock();
+            }
         });
     }
 
