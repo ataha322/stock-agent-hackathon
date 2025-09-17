@@ -21,6 +21,7 @@ export class App {
     private selectedStock: string | null = null;
     private currentView: "chart" | "news" = "chart";
     private currentFocus: "stock" | "recent" | "major" | "valuation" = "stock";
+    private ongoingPerplexityCalls: Set<string> = new Set();
 
     private database!: WatchlistDatabase;
     private alphaVantage!: AlphaVantageService;
@@ -98,7 +99,7 @@ export class App {
             tags: true,
             style: {
                 selected: {
-                    bg: "green",
+                    bg: "lightcyan",
                     fg: "white",
                 },
             },
@@ -925,6 +926,21 @@ export class App {
         if (!stock) return;
 
         this.selectedStock = stock.ticker;
+        
+        // Check if there's already an ongoing call for this stock
+        if (this.ongoingPerplexityCalls.has(stock.ticker)) {
+            logger.info(`Skipping duplicate Perplexity call for ${stock.ticker} - already in progress`);
+            this.recentNewsWidget.setContent("Refreshing recent news...");
+            this.majorEventsWidget.setContent("Refreshing major events...");
+            this.valuationWidget.setContent("Refreshing valuation assessment...");
+            this.screen.render();
+            return;
+        }
+        
+        // Mark this stock as having an ongoing call
+        logger.info(`Starting Perplexity analysis for ${stock.ticker}`);
+        this.ongoingPerplexityCalls.add(stock.ticker);
+        
         this.recentNewsWidget.setContent("Loading recent news...");
         this.majorEventsWidget.setContent("Loading major events...");
         this.valuationWidget.setContent("Loading valuation assessment...");
@@ -961,6 +977,10 @@ export class App {
             this.majorEventsWidget.setContent(errorMessage);
             this.valuationWidget.setContent(errorMessage);
             this.screen.render();
+        } finally {
+            // Remove the stock from ongoing calls set
+            logger.info(`Completed Perplexity analysis for ${stock.ticker}`);
+            this.ongoingPerplexityCalls.delete(stock.ticker);
         }
     }
 
@@ -998,6 +1018,13 @@ export class App {
 
         this.selectedStock = stock.ticker;
         
+        // Check if there's already an ongoing call for this stock
+        if (this.ongoingPerplexityCalls.has(stock.ticker)) {
+            logger.info(`Skipping duplicate refresh for ${stock.ticker} - already in progress`);
+            this.showMessage("Analysis refresh already in progress", "warning");
+            return;
+        }
+        
         // Clear cache for this stock's analysis to force fresh API call
         if (this.database) {
             const cleared = this.database.clearSpecificCache(stock.ticker, 'analysis');
@@ -1005,6 +1032,10 @@ export class App {
                 logger.info(`Cleared cached analysis for ${stock.ticker}`);
             }
         }
+
+        // Mark this stock as having an ongoing call
+        logger.info(`Starting manual refresh for ${stock.ticker}`);
+        this.ongoingPerplexityCalls.add(stock.ticker);
 
         // Show loading state
         this.recentNewsWidget.setContent("Refreshing recent news...");
@@ -1046,6 +1077,9 @@ export class App {
             this.valuationWidget.setContent(errorMessage);
             this.showMessage("Failed to refresh analysis", "error");
             this.screen.render();
+        } finally {
+            // Remove the stock from ongoing calls set
+            this.ongoingPerplexityCalls.delete(stock.ticker);
         }
     }
 }
