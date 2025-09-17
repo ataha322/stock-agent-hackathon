@@ -1,11 +1,18 @@
 import { logger } from "../utils/logger";
 import { WatchlistDatabase } from "../database/watchlist";
 
+export interface FinancialEvent {
+    date: string; // YYYY-MM-DD format
+    description: string;
+    impact: 'positive' | 'negative' | 'neutral';
+}
+
 export interface StockAnalysis {
     ticker: string;
     recentNews: string[];
     majorEvents: string[];
     valuationAssessment: string[];
+    events: FinancialEvent[];
     lastUpdated: string;
 }
 
@@ -108,6 +115,10 @@ export class PerplexityService {
                 throw new Error("Empty response from Perplexity API");
             }
             const analysis = this.parseAnalysis(upperTicker, content);
+            
+            // Also fetch financial events
+            const events = await this.getFinancialEvents(upperTicker);
+            analysis.events = events;
 
             // Cache the result for 24 hours
             if (this.database) {
@@ -121,6 +132,121 @@ export class PerplexityService {
             logger.error(`Error fetching analysis for ${ticker}:`, error);
             throw error;
         }
+    }
+
+    async getFinancialEvents(ticker: string): Promise<FinancialEvent[]> {
+        try {
+            const upperTicker = ticker.toUpperCase();
+            
+            // Check database cache first (24-hour cache)
+            if (this.database) {
+                const cachedData = this.database.getCacheData(upperTicker, "events");
+                if (cachedData) {
+                    logger.info(`Using cached events data for ${upperTicker}`);
+                    return cachedData as FinancialEvent[];
+                }
+            }
+
+            logger.info(`Making Perplexity API call for events: ${upperTicker}`);
+            
+            const eventsQuery = `Find specific financial events for ${upperTicker} stock in the past 12 months with EXACT dates:
+- Earnings releases and surprises
+- Major news announcements 
+- Analyst upgrades/downgrades
+- Leadership changes
+- Product launches or recalls
+- Regulatory issues
+
+For each event, provide:
+1. Exact date (YYYY-MM-DD format)
+2. Brief description (max 10 words)
+3. Impact type (positive/negative/neutral)
+
+Format as: DATE | DESCRIPTION | IMPACT`;
+
+            const response = await fetch(this.baseUrl, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${this.apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: "sonar-pro",
+                    messages: [
+                        {
+                            role: "user",
+                            content: eventsQuery
+                        }
+                    ],
+                    max_tokens: 2000,
+                    temperature: 0.1,
+                    stream: false
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                logger.error(`Perplexity API error for events: Status ${response.status}, Response: ${errorText}`);
+                throw new Error(`Perplexity API error (${response.status}): ${errorText}`);
+            }
+
+            const data = await response.json() as PerplexityResponse;
+
+            if (!data.choices || data.choices.length === 0) {
+                throw new Error("No events response from Perplexity API");
+            }
+
+            const content = data.choices[0]?.message?.content;
+            if (!content) {
+                throw new Error("Empty events response from Perplexity API");
+            }
+
+            const events = this.parseFinancialEvents(content);
+
+            // Cache the result for 24 hours
+            if (this.database) {
+                this.database.setCacheData(upperTicker, "events", events, 24);
+                logger.info(`Cached events data for ${upperTicker} for 24 hours`);
+            }
+
+            return events;
+
+        } catch (error) {
+            logger.error(`Error fetching events for ${ticker}:`, error);
+            return []; // Return empty array on error
+        }
+    }
+
+    private parseFinancialEvents(content: string): FinancialEvent[] {
+        const events: FinancialEvent[] = [];
+        
+        try {
+            const lines = content.split('\n').filter(line => line.trim());
+            
+            for (const line of lines) {
+                const trimmedLine = line.trim();
+                
+                // Look for lines that match the format: DATE | DESCRIPTION | IMPACT
+                const match = trimmedLine.match(/(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+)\s*\|\s*(positive|negative|neutral)/i);
+                
+                if (match && match[1] && match[2] && match[3]) {
+                    const [, date, description, impact] = match;
+                    events.push({
+                        date: date.trim(),
+                        description: description.trim().substring(0, 50), // Limit description length
+                        impact: impact.trim().toLowerCase() as 'positive' | 'negative' | 'neutral'
+                    });
+                }
+            }
+            
+            // Sort events by date (most recent first)
+            events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            
+        } catch (error) {
+            logger.warn(`Error parsing financial events: ${error}`);
+        }
+        
+        return events.slice(0, 10); // Limit to 10 most recent events
     }
 
     private parseAnalysis(ticker: string, content: string): StockAnalysis {
@@ -195,6 +321,7 @@ export class PerplexityService {
             recentNews,
             majorEvents,
             valuationAssessment,
+            events: [], // Will be populated by getStockAnalysis
             lastUpdated: new Date().toISOString()
         };
     }

@@ -2,7 +2,7 @@ import blessed from "blessed";
 import contrib from "blessed-contrib";
 import { WatchlistDatabase, type WatchlistItem } from "./database/watchlist";
 import { AlphaVantageService, type TimeRange } from "./services/alpha-vantage";
-import { PerplexityService, type StockAnalysis } from "./services/perplexity";
+import { PerplexityService, type StockAnalysis, type FinancialEvent } from "./services/perplexity";
 import { logger } from "./utils/logger";
 
 export class App {
@@ -17,10 +17,11 @@ export class App {
     private recentNewsWidget!: blessed.Widgets.BoxElement;
     private majorEventsWidget!: blessed.Widgets.BoxElement;
     private valuationWidget!: blessed.Widgets.BoxElement;
+    private eventsWidget!: blessed.Widgets.BoxElement;
     private currentTimeRange: TimeRange = "1m";
     private selectedStock: string | null = null;
     private currentView: "chart" | "news" = "chart";
-    private currentFocus: "stock" | "recent" | "major" | "valuation" = "stock";
+    private currentFocus: "stock" | "recent" | "major" | "valuation" | "events" = "stock";
     private ongoingPerplexityCalls: Set<string> = new Set();
 
     private database!: WatchlistDatabase;
@@ -175,20 +176,20 @@ export class App {
             left: 1,
             width: "100%-6",
             height: 1,
-            content: "[Chart View] | Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y",
+            content: "Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y",
             tags: false,
             style: {
                 fg: "cyan",
             },
         });
 
-        // Create the line chart
+        // Create the line chart (reduced height to make room for events)
         this.chart = contrib.line({
             parent: this.chartContainer,
             top: 4,
             left: 1,
             width: "100%-3",
-            height: "100%-6",
+            height: "70%",
             style: {
                 line: "cyan",
                 text: "white",
@@ -198,6 +199,39 @@ export class App {
             xPadding: 5,
             showLegend: false,
             wholeNumbersOnly: false,
+        });
+
+        // Events widget (below chart)
+        this.eventsWidget = blessed.box({
+            parent: this.chartContainer,
+            label: " {red-fg}[F]{/red-fg}inancial Events ",
+            top: "75%",
+            left: 1,
+            width: "100%-3",
+            height: "25%-1",
+            border: {
+                type: "line",
+            },
+            style: {
+                border: {
+                    fg: "green",
+                },
+                focus: {
+                    border: {
+                        fg: "lightyellow",
+                    },
+                },
+            },
+            content: "Select a stock to view events",
+            tags: true,
+            scrollable: true,
+            alwaysScroll: true,
+            scrollbar: {
+                ch: " ",
+                style: {
+                    bg: "lightcyan",
+                },
+            },
         });
 
         // News analysis container (initially hidden)
@@ -324,20 +358,16 @@ export class App {
         // Handle watchlist selection to update chart/news
         this.watchlistWidget.on('select', (item: any, index: number) => {
             logger.info(`Selected stock at index ${index}: ${item}`);
-            if (this.currentView === "chart") {
-                this.updateChartForSelectedStock();
-            } else {
-                this.updateNewsForSelectedStock();
-            }
+            // Always load analysis and events, then update displays based on current view
+            this.loadAnalysisAndEvents();
+            this.updateChartForSelectedStock();
         });
         
         // Also handle key events for navigation
         this.watchlistWidget.key(['enter', 'space'], () => {
-            if (this.currentView === "chart") {
-                this.updateChartForSelectedStock();
-            } else {
-                this.updateNewsForSelectedStock();
-            }
+            // Always load analysis and events, then update displays based on current view
+            this.loadAnalysisAndEvents();
+            this.updateChartForSelectedStock();
         });
 
         this.screen.append(mainContainer);
@@ -604,8 +634,9 @@ export class App {
                 this.showMessage("Refreshing news analysis...", "warning");
                 this.refreshNewsAnalysis();
             } else {
-                this.showMessage("Refreshing stock prices...", "warning");
-                this.loadWatchlist();
+                this.showMessage("Refreshing stock prices and events...", "warning");
+                this.loadWatchlist(); // Refresh stock prices
+                this.refreshNewsAnalysis(); // Also refresh analysis+events
             }
         });
 
@@ -634,6 +665,12 @@ export class App {
         this.screen.key(["v", "V"], () => {
             if (this.currentView === "news") {
                 this.setFocus("valuation");
+            }
+        });
+
+        this.screen.key(["f", "F"], () => {
+            if (this.currentView === "chart") {
+                this.setFocus("events");
             }
         });
 
@@ -690,6 +727,7 @@ export class App {
                 y: [0],
                 style: { line: "gray" }
             }]);
+            this.eventsWidget.setContent("Select a stock to view events");
             this.screen.render();
             return;
         }
@@ -762,8 +800,38 @@ export class App {
                 style: { line: "red" }
             }]);
             this.chart.setLabel(`${stock.ticker} - Error Loading Data`);
+            this.eventsWidget.setContent(`Failed to load events for ${stock.ticker}`);
             this.screen.render();
         }
+    }
+
+    private displayEventsForSelectedStock(events?: FinancialEvent[]) {
+        if (!events || events.length === 0) {
+            this.eventsWidget.setContent("No financial events found for this stock");
+        } else {
+            // Format events with numbering
+            const eventsText = events.map((event, index) => {
+                const impactColor = event.impact === 'positive' ? 'green' : 
+                                   event.impact === 'negative' ? 'red' : 'yellow';
+                return `{bold}[${index + 1}]{/bold} ${event.date} - ${event.description} {${impactColor}-fg}(${event.impact}){/}`;
+            }).join('\n\n');
+            
+            this.eventsWidget.setContent(eventsText);
+        }
+        
+        this.screen.render();
+    }
+
+    private displayNewsForSelectedStock(analysis?: StockAnalysis) {
+        if (!analysis) {
+            this.recentNewsWidget.setContent("No analysis available");
+            this.majorEventsWidget.setContent("No analysis available");
+            this.valuationWidget.setContent("No analysis available");
+        } else {
+            this.updateNewsWidgets(analysis);
+        }
+        
+        this.screen.render();
     }
 
     private formatDateForChart(dateString: string): string {
@@ -811,16 +879,17 @@ export class App {
         if (this.currentView === "chart") {
             this.currentView = "news";
             this.chart.hide();
+            this.eventsWidget.hide();
             this.newsContainer.show();
-            this.timeRangeSelector.setContent("[News View] | Tab: Switch to Chart | s/n/m/v: Focus | j/k: Navigate/Scroll");
-            this.updateNewsForSelectedStock();
+            this.timeRangeSelector.setContent("Tab: Switch to Chart | s/n/m/v: Focus | j/k: Navigate/Scroll");
             // Set focus back to stock list by default when switching to news
             this.setFocus("stock");
         } else {
             this.currentView = "chart";
             this.newsContainer.hide();
             this.chart.show();
-            this.timeRangeSelector.setContent(`[Chart View] | Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y`);
+            this.eventsWidget.show();
+            this.timeRangeSelector.setContent(`Tab: Switch to News | 1=1m 2=3m 3=1y 4=5y`);
             this.updateChartForSelectedStock();
             // Ensure stock list is focused in chart view
             this.setFocus("stock");
@@ -828,7 +897,7 @@ export class App {
         this.screen.render();
     }
 
-    private setFocus(focusElement: "stock" | "recent" | "major" | "valuation") {
+    private setFocus(focusElement: "stock" | "recent" | "major" | "valuation" | "events") {
         this.currentFocus = focusElement;
         
         switch (focusElement) {
@@ -850,6 +919,11 @@ export class App {
                     this.valuationWidget.focus();
                 }
                 break;
+            case "events":
+                if (this.currentView === "chart") {
+                    this.eventsWidget.focus();
+                }
+                break;
         }
         
         this.screen.render();
@@ -867,12 +941,9 @@ export class App {
                     this.watchlistWidget.down(1);
                 }
                 this.screen.render();
-                // Trigger appropriate update based on current view
-                if (this.currentView === "chart") {
-                    this.updateChartForSelectedStock();
-                } else {
-                    this.updateNewsForSelectedStock();
-                }
+                // Always load analysis and events, then update displays
+                this.loadAnalysisAndEvents();
+                this.updateChartForSelectedStock();
                 break;
             case "recent":
                 // Scroll the recent news widget
@@ -907,10 +978,21 @@ export class App {
                     this.screen.render();
                 }
                 break;
+            case "events":
+                // Scroll the valuation widget
+                if (this.currentView === "chart") {
+                    if (direction === "up") {
+                        this.eventsWidget.scroll(-1);
+                    } else {
+                        this.eventsWidget.scroll(1);
+                    }
+                    this.screen.render();
+                }
+                break;
         }
     }
 
-    private async updateNewsForSelectedStock() {
+    private async loadAnalysisAndEvents() {
         const selectedIndex = (this.watchlistWidget as any).selected || 0;
         const stocks = this.database.getAllStocks();
         
@@ -918,6 +1000,7 @@ export class App {
             this.recentNewsWidget.setContent("No stock selected for news analysis");
             this.majorEventsWidget.setContent("No stock selected for news analysis");
             this.valuationWidget.setContent("No stock selected for news analysis");
+            this.eventsWidget.setContent("Select a stock to view events");
             this.screen.render();
             return;
         }
@@ -944,6 +1027,7 @@ export class App {
         this.recentNewsWidget.setContent("Loading recent news...");
         this.majorEventsWidget.setContent("Loading major events...");
         this.valuationWidget.setContent("Loading valuation assessment...");
+        this.eventsWidget.setContent("Loading financial events...");
         this.screen.render();
         
         try {
@@ -953,12 +1037,14 @@ export class App {
                 this.recentNewsWidget.setContent(`No analysis available for ${stock.ticker}`);
                 this.majorEventsWidget.setContent(`No analysis available for ${stock.ticker}`);
                 this.valuationWidget.setContent(`No analysis available for ${stock.ticker}`);
+                this.eventsWidget.setContent(`No events available for ${stock.ticker}`);
                 this.screen.render();
                 return;
             }
 
             this.updateNewsWidgets(analysis);
-            this.timeRangeSelector.setContent(`[News View] | Tab: Switch to Chart | ${stock.ticker} Analysis`);
+            this.displayEventsForSelectedStock(analysis.events);
+            this.timeRangeSelector.setContent(`Tab: Switch to Chart | ${stock.ticker} Analysis`);
             this.screen.render();
             
         } catch (error) {
@@ -976,6 +1062,7 @@ export class App {
             this.recentNewsWidget.setContent(errorMessage);
             this.majorEventsWidget.setContent(errorMessage);
             this.valuationWidget.setContent(errorMessage);
+            this.eventsWidget.setContent(`Failed to load events for ${stock.ticker}`);
             this.screen.render();
         } finally {
             // Remove the stock from ongoing calls set
@@ -1025,11 +1112,12 @@ export class App {
             return;
         }
         
-        // Clear cache for this stock's analysis to force fresh API call
+        // Clear cache for this stock's analysis and events to force fresh API calls
         if (this.database) {
-            const cleared = this.database.clearSpecificCache(stock.ticker, 'analysis');
-            if (cleared) {
-                logger.info(`Cleared cached analysis for ${stock.ticker}`);
+            const analysisCleared = this.database.clearSpecificCache(stock.ticker, 'analysis');
+            const eventsCleared = this.database.clearSpecificCache(stock.ticker, 'events');
+            if (analysisCleared || eventsCleared) {
+                logger.info(`Cleared cached data for ${stock.ticker} (analysis: ${analysisCleared}, events: ${eventsCleared})`);
             }
         }
 
@@ -1056,7 +1144,8 @@ export class App {
             }
 
             this.updateNewsWidgets(analysis);
-            this.timeRangeSelector.setContent(`[News View] | Tab: Switch to Chart | ${stock.ticker} Analysis (Refreshed)`);
+            this.displayEventsForSelectedStock(analysis.events);
+            this.timeRangeSelector.setContent(`Tab: Switch to Chart | ${stock.ticker} Analysis (Refreshed)`);
             this.showMessage("News analysis refreshed", "success");
             this.screen.render();
             
@@ -1075,6 +1164,7 @@ export class App {
             this.recentNewsWidget.setContent(errorMessage);
             this.majorEventsWidget.setContent(errorMessage);
             this.valuationWidget.setContent(errorMessage);
+            this.eventsWidget.setContent(`Failed to load events for ${stock.ticker}`);
             this.showMessage("Failed to refresh analysis", "error");
             this.screen.render();
         } finally {
